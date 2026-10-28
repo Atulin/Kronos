@@ -7,6 +7,6 @@ vars:
     sh: yq -r '.version' "./pubspec.yaml"
 
 tasks:
-  slop: sbx run "ghcr.io/atulin/opencode-sandbox:1.5.0" --kit "ghcr.io/atulin/dart-sanxbox-mixin:{{.MIXIN_VERSION}}" .
+  slop: sbx run "ghcr.io/atulin/opencode-sandbox:latest" --kit "ghcr.io/atulin/dart-flutter:latest" .
 
   release: git tag -a "v{{.APP_VERSION}}" -m "Release v{{.APP_VERSION}}" && git push origin "v{{.APP_VERSION}}"
