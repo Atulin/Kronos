@@ -7,6 +7,13 @@ vars:
     sh: yq -r '.version' "./pubspec.yaml"
 
 tasks:
-  slop: sbx run "ghcr.io/atulin/opencode-sandbox:latest" --kit "ghcr.io/atulin/dart-flutter:latest" .
+  slop:
+    vars:
+      NAME: "kronos-agent"
+    cmds:
+      - sbx secret set github --sandbox '{{.NAME}}' --command "gh auth token"
+      - sbx run 'ghcr.io/atulin/opencode-sandbox:latest' --kit 'ghcr.io/atulin/dart-flutter:latest' --name '{{.NAME}}' -e GITHUB_TOKEN=proxy-managed .
 
   release: git tag -a "v{{.APP_VERSION}}" -m "Release v{{.APP_VERSION}}" && git push origin "v{{.APP_VERSION}}"
+
+  test: sbx ls
