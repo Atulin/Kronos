@@ -619,61 +619,69 @@ class _SuggestionTextFieldState extends State<_SuggestionTextField> {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) => OverlayPortal(
-      controller: _portalController,
-      overlayChildBuilder: (overlayContext) => CompositedTransformFollower(
-        link: _layerLink,
-        targetAnchor: Alignment.topLeft,
-        followerAnchor: Alignment.bottomLeft,
-        offset: const Offset(0, -8),
-        showWhenUnlinked: false,
-        child: TextFieldTapRegion(
+    builder: (context, constraints) {
+      final overlayHeight = (widget.suggestions.length * 48)
+          .clamp(48, 160)
+          .toDouble();
+      return OverlayPortal(
+        controller: _portalController,
+        overlayChildBuilder: (overlayContext) => Positioned(
+          top: 0,
+          left: 0,
           child: SizedBox(
             width: constraints.maxWidth,
-            child: Material(
-              color: Theme.of(overlayContext).colorScheme.surface,
-              elevation: 12,
-              borderRadius: BorderRadius.circular(14),
-              clipBehavior: Clip.antiAlias,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 160),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: widget.suggestions.length,
-                  itemBuilder: (context, index) => ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.history_rounded, size: 20),
-                    title: Text(widget.suggestions[index]),
-                    onTap: () => widget.onSuggestion(widget.suggestions[index]),
+            height: overlayHeight,
+            child: CompositedTransformFollower(
+              link: _layerLink,
+              targetAnchor: Alignment.topLeft,
+              followerAnchor: Alignment.bottomLeft,
+              offset: const Offset(0, -8),
+              showWhenUnlinked: false,
+              child: TextFieldTapRegion(
+                child: Material(
+                  color: Theme.of(overlayContext).colorScheme.surface,
+                  elevation: 12,
+                  borderRadius: BorderRadius.circular(14),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListView.builder(
+                    itemExtent: 48,
+                    itemCount: widget.suggestions.length,
+                    itemBuilder: (context, index) => ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.history_rounded, size: 20),
+                      title: Text(widget.suggestions[index]),
+                      onTap: () =>
+                          widget.onSuggestion(widget.suggestions[index]),
+                    ),
                   ),
                 ),
               ),
             ),
           ),
         ),
-      ),
-      child: CompositedTransformTarget(
-        link: _layerLink,
-        child: TextField(
-          controller: widget.controller,
-          focusNode: widget.focusNode,
-          onChanged: widget.onChanged,
-          onSubmitted: widget.onSubmitted,
-          textCapitalization: widget.textCapitalization,
-          decoration: InputDecoration(
-            hintText: 'What are you working on?',
-            prefixIcon: const Icon(Icons.add_task_rounded),
-            filled: true,
-            fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(15),
-              borderSide: BorderSide.none,
+        child: CompositedTransformTarget(
+          link: _layerLink,
+          child: TextField(
+            controller: widget.controller,
+            focusNode: widget.focusNode,
+            onChanged: widget.onChanged,
+            onSubmitted: widget.onSubmitted,
+            textCapitalization: widget.textCapitalization,
+            decoration: InputDecoration(
+              hintText: 'What are you working on?',
+              prefixIcon: const Icon(Icons.add_task_rounded),
+              filled: true,
+              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(15),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 14),
             ),
-            contentPadding: const EdgeInsets.symmetric(vertical: 14),
           ),
         ),
-      ),
-    ),
+      );
+    },
   );
 }
 

@@ -167,6 +167,12 @@ void main() {
       expect(find.byIcon(Icons.history_rounded), findsOneWidget);
       expect(find.text('Planning'), findsNWidgets(2));
       expect(tester.getTopLeft(runningTaskStop).dy, topBeforeSuggestions);
+      final suggestionTop = tester
+          .getTopLeft(find.byIcon(Icons.history_rounded))
+          .dy;
+      final inputTop = tester.getTopLeft(find.byType(TextField)).dy;
+      expect(suggestionTop, greaterThanOrEqualTo(0));
+      expect(suggestionTop, lessThan(inputTop));
       await tester.pumpWidget(const SizedBox());
     },
   );

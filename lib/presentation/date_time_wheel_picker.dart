@@ -102,7 +102,8 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
                     textTheme: CupertinoTextThemeData(
                       dateTimePickerTextStyle: TextStyle(
                         color: colors.onSurface,
-                        fontSize: 21,
+                        fontSize: 32,
+                        height: 1,
                       ),
                     ),
                   ),
@@ -122,12 +123,13 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
                           itemBuilder: (context, index) {
                             final date = _firstDate.add(Duration(days: index));
                             return Text(
-                              MaterialLocalizations.of(
-                                context,
-                              ).formatMediumDate(date),
+                              _formatWheelDate(date),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               textAlign: TextAlign.center,
+                              style: CupertinoTheme.of(
+                                context,
+                              ).textTheme.dateTimePickerTextStyle,
                             );
                           },
                         ),
@@ -141,6 +143,9 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
                           itemBuilder: (context, index) => Text(
                             _pad(index % 24),
                             textAlign: TextAlign.center,
+                            style: CupertinoTheme.of(
+                              context,
+                            ).textTheme.dateTimePickerTextStyle,
                           ),
                           onSelectedItemChanged: (index) =>
                               setState(() => _selectedHour = index % 24),
@@ -161,6 +166,9 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
                           itemBuilder: (context, index) => Text(
                             _pad(index % 60),
                             textAlign: TextAlign.center,
+                            style: CupertinoTheme.of(
+                              context,
+                            ).textTheme.dateTimePickerTextStyle,
                           ),
                           onSelectedItemChanged: (index) =>
                               setState(() => _selectedMinute = index % 60),
@@ -203,12 +211,17 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
           diameterRatio: 1.8,
           squeeze: 1.12,
           perspective: 0.002,
+          useMagnifier: true,
+          magnification: 1.05,
           overAndUnderCenterOpacity: 0.48,
           physics: const FixedExtentScrollPhysics(),
           onSelectedItemChanged: onSelectedItemChanged,
           childDelegate: ListWheelChildBuilderDelegate(
             childCount: childCount,
-            builder: itemBuilder,
+            builder: (context, index) {
+              final item = itemBuilder(context, index);
+              return item == null ? null : Center(child: item);
+            },
           ),
         ),
       ],
@@ -228,3 +241,22 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
 }
 
 String _pad(int value) => value.toString().padLeft(2, '0');
+
+String _formatWheelDate(DateTime date) {
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${weekdays[date.weekday - 1]}, ${months[date.month - 1]} ${date.day}';
+}
