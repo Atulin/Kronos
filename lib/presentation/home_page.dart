@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../data/backup_service.dart';
 import '../domain/task.dart';
 import '../domain/task_filter.dart';
+import 'analytics_page.dart';
 import 'search_filter_sheet.dart';
 import 'settings_page.dart';
 import 'task_details_page.dart';
@@ -72,6 +73,21 @@ class _HomePageState extends State<HomePage> {
                     ? Icons.manage_search_rounded
                     : Icons.search_rounded,
               ),
+            ),
+          ),
+          ListenableBuilder(
+            listenable: widget.viewModel,
+            builder: (context, _) => IconButton(
+              tooltip: 'Analytics',
+              onPressed: widget.viewModel.isLoaded
+                  ? () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            AnalyticsPage(viewModel: widget.viewModel),
+                      ),
+                    )
+                  : null,
+              icon: const Icon(Icons.insights_outlined),
             ),
           ),
           IconButton(

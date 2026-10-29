@@ -5,6 +5,7 @@ import 'package:kronos/data/task_repository.dart';
 import 'package:kronos/domain/task.dart';
 import 'package:kronos/domain/task_backup.dart';
 import 'package:kronos/domain/task_filter.dart';
+import 'package:kronos/presentation/duration_bar_chart.dart';
 import 'package:kronos/presentation/kronos_app.dart';
 import 'package:kronos/presentation/task_view_model.dart';
 
@@ -192,6 +193,41 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('analytics compares durations and time between instances', (
+    tester,
+  ) async {
+    final repository = _MemoryTaskRepository();
+    final viewModel = TaskViewModel(repository);
+    final now = DateTime.now();
+    repository._tasks.addAll([
+      Task(
+        id: 'planning-1',
+        name: 'Planning',
+        startedAt: now.subtract(const Duration(hours: 3)),
+        endedAt: now.subtract(const Duration(hours: 2)),
+      ),
+      Task(
+        id: 'planning-2',
+        name: 'Planning',
+        startedAt: now.subtract(const Duration(hours: 1)),
+        endedAt: now.subtract(const Duration(minutes: 30)),
+      ),
+    ]);
+    await tester.pumpWidget(KronosApp(viewModel: viewModel));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Analytics'));
+    await tester.pumpAndSettle();
+    expect(find.text('2 samples'), findsOneWidget);
+    expect(find.byType(DurationBarChart), findsOneWidget);
+
+    await tester.tap(find.text('Time between instances'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 sample'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('saves multiline notes from task details', (tester) async {
     final repository = _MemoryTaskRepository();
     final viewModel = TaskViewModel(repository);
@@ -362,4 +398,17 @@ class _MemoryTaskRepository implements TaskRepository {
   @override
   Future<void> deleteTask(String id) async =>
       _tasks.removeWhere((task) => task.id == id);
+
+  @override
+  Stream<Task> streamTasksNamed(String name, {DateTime? startedBefore}) async* {
+    final matching =
+        _tasks.where((task) {
+          return task.name.toLowerCase() == name.toLowerCase() &&
+              (startedBefore == null || !task.startedAt.isAfter(startedBefore));
+        }).toList()..sort((a, b) {
+          final byStart = a.startedAt.compareTo(b.startedAt);
+          return byStart != 0 ? byStart : a.id.compareTo(b.id);
+        });
+    yield* Stream.fromIterable(matching);
+  }
 }

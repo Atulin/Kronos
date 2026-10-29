@@ -253,6 +253,33 @@ void main() {
     },
   );
 
+  test('streams one task name chronologically for analytics', () async {
+    final repository = SqliteTaskRepository(
+      factory: databaseFactoryFfi,
+      databasePath: () async => inMemoryDatabasePath,
+    );
+    addTearDown(repository.close);
+    final date = DateTime.utc(2026, 1, 1);
+    for (final (id, name, minute) in [
+      ('second', 'Planning', 20),
+      ('other', 'Review', 10),
+      ('first', 'planning', 5),
+    ]) {
+      await repository.saveTask(
+        Task(
+          id: id,
+          name: name,
+          startedAt: date.add(Duration(minutes: minute)),
+          endedAt: date.add(Duration(minutes: minute + 2)),
+        ),
+      );
+    }
+
+    final events = await repository.streamTasksNamed('PLANNING').toList();
+
+    expect(events.map((task) => task.id), ['first', 'second']);
+  });
+
   test(
     'upgrades an existing version 2 database without losing tasks',
     () async {

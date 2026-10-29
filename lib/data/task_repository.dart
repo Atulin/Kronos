@@ -63,6 +63,7 @@ abstract interface class TaskRepository {
     bool clearColor = false,
   });
   Future<void> deleteTask(String id);
+  Stream<Task> streamTasksNamed(String name, {DateTime? startedBefore});
 }
 
 class SqliteTaskRepository implements TaskRepository {
@@ -84,7 +85,7 @@ class SqliteTaskRepository implements TaskRepository {
     return _databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 4,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE tasks (
@@ -110,6 +111,7 @@ class SqliteTaskRepository implements TaskRepository {
           ''');
           await _createSettingsTable(db);
           await _createCustomColorsTable(db);
+          await _createAnalyticsIndexes(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -121,6 +123,9 @@ class SqliteTaskRepository implements TaskRepository {
               "ALTER TABLE tasks ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
             );
             await _createCustomColorsTable(db);
+          }
+          if (oldVersion < 4) {
+            await _createAnalyticsIndexes(db);
           }
         },
       ),
@@ -154,6 +159,13 @@ class SqliteTaskRepository implements TaskRepository {
         argb INTEGER NOT NULL UNIQUE
       )
     ''');
+  }
+
+  static Future<void> _createAnalyticsIndexes(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS tasks_name_analytics_idx '
+      'ON tasks(name COLLATE NOCASE, started_at ASC, id ASC)',
+    );
   }
 
   static Future<String> _defaultDatabasePath() async {
@@ -408,6 +420,31 @@ class SqliteTaskRepository implements TaskRepository {
   Future<void> deleteTask(String id) async {
     final db = await _db;
     await db.delete('tasks', where: 'id = ?', whereArgs: [id]);
+  }
+
+  @override
+  Stream<Task> streamTasksNamed(String name, {DateTime? startedBefore}) async* {
+    final db = await _db;
+    final where = startedBefore == null
+        ? 'name = ? COLLATE NOCASE'
+        : 'name = ? COLLATE NOCASE AND started_at <= ?';
+    final whereArgs = startedBefore == null
+        ? [name]
+        : [name, startedBefore.toIso8601String()];
+    final cursor = await db.queryCursor(
+      'tasks',
+      where: where,
+      whereArgs: whereArgs,
+      orderBy: 'started_at ASC, id ASC',
+      bufferSize: 128,
+    );
+    try {
+      while (await cursor.moveNext()) {
+        yield _taskFromRow(cursor.current);
+      }
+    } finally {
+      await cursor.close();
+    }
   }
 
   Future<void> close() async {

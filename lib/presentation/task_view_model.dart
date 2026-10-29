@@ -34,6 +34,7 @@ class TaskViewModel extends ChangeNotifier {
 
   List<Task> get runningTasks => List.unmodifiable(_runningTasks);
   List<Task> get completedTasks => List.unmodifiable(_completedTasks);
+  List<String> get taskNames => List.unmodifiable(_taskNames);
   bool get isLoaded => _isLoaded;
   bool get hasMoreCompleted => _hasMoreCompleted;
   bool get isLoadingMore => _isLoadingMore;
@@ -62,6 +63,9 @@ class TaskViewModel extends ChangeNotifier {
     final stored = _colors[taskColorKey(name)];
     return stored == null ? null : Color(stored);
   }
+
+  Stream<Task> streamAnalyticsTasks(String name, {DateTime? startedBefore}) =>
+      _repository.streamTasksNamed(name, startedBefore: startedBefore);
 
   Future<void> load() async {
     final data = await _repository.loadInitial(

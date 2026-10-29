@@ -284,4 +284,17 @@ class _MemoryTaskRepository implements TaskRepository {
   @override
   Future<void> deleteTask(String id) async =>
       tasks.removeWhere((task) => task.id == id);
+
+  @override
+  Stream<Task> streamTasksNamed(String name, {DateTime? startedBefore}) async* {
+    final matching =
+        tasks.where((task) {
+          return task.name.toLowerCase() == name.toLowerCase() &&
+              (startedBefore == null || !task.startedAt.isAfter(startedBefore));
+        }).toList()..sort((a, b) {
+          final byStart = a.startedAt.compareTo(b.startedAt);
+          return byStart != 0 ? byStart : a.id.compareTo(b.id);
+        });
+    yield* Stream.fromIterable(matching);
+  }
 }
