@@ -24,6 +24,7 @@ void main() {
 
     expect(viewModel.runningTasks, hasLength(1));
     expect(find.text('Write report'), findsOneWidget);
+    expect(find.text('IN PROGRESS'), findsNothing);
     await tester.tap(find.byIcon(Icons.stop_rounded));
     await tester.pump();
     await tester.pump();
@@ -48,6 +49,8 @@ void main() {
     final theme = Theme.of(tester.element(find.text('Dark')));
     expect(theme.brightness, Brightness.dark);
     expect(theme.colorScheme.secondary, const Color(0xFF05F2DB));
+    expect(theme.colorScheme.surface, const Color(0xFF302E32));
+    expect(theme.colorScheme.surfaceContainerHighest, const Color(0xFF454247));
     expect(repository.themeMode, 'dark');
     await tester.pumpWidget(const SizedBox());
   });
@@ -65,9 +68,8 @@ void main() {
     await tester.tap(find.text('Planning'));
     await tester.pumpAndSettle();
 
-    final noColor = tester.widget<ChoiceChip>(find.byType(ChoiceChip));
-    expect(find.text('No color'), findsOneWidget);
-    expect(noColor.selected, isTrue);
+    expect(find.byTooltip('No color'), findsOneWidget);
+    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 }

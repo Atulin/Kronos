@@ -182,15 +182,31 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
             spacing: 12,
             runSpacing: 12,
             children: [
-              ChoiceChip(
-                avatar: Icon(
-                  Icons.block_rounded,
-                  size: 18,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+              Tooltip(
+                message: 'No color',
+                child: InkWell(
+                  onTap: () => setState(() => _color = null),
+                  customBorder: const CircleBorder(),
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _color == null
+                            ? Theme.of(context).colorScheme.onSurface
+                            : Theme.of(context).colorScheme.outlineVariant,
+                        width: _color == null ? 3 : 1,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.close_rounded,
+                      color: Color(0xFFD32F2F),
+                      size: 23,
+                    ),
+                  ),
                 ),
-                label: const Text('No color'),
-                selected: _color == null,
-                onSelected: (_) => setState(() => _color = null),
               ),
               for (final color in taskColors)
                 InkWell(

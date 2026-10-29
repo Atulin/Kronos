@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 
 class KronosPalette {
   static const darkBackground = Color(0xFF0D0D0D);
-  static const darkSurface = Color(0xFF373438);
+  static const darkSurface = Color(0xFF302E32);
+  static const darkInputSurface = Color(0xFF454247);
   static const brand = Color(0xFF2C6581);
   static const brightAccent = Color(0xFF05F2DB);
   static const subtleAccent = Color(0xFF4EABBF);
@@ -39,6 +40,7 @@ ThemeData buildDarkTheme() {
         secondary: KronosPalette.brightAccent,
         tertiary: KronosPalette.subtleAccent,
         surface: KronosPalette.darkSurface,
+        surfaceContainerHighest: KronosPalette.darkInputSurface,
         onSurface: Colors.white,
         onPrimary: Colors.white,
         onSecondary: KronosPalette.darkBackground,

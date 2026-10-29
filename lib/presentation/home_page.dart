@@ -250,6 +250,7 @@ class _RunningTaskTile extends StatelessWidget {
     onLongPress: onDelete,
     child: _TaskCard(
       color: color,
+      showBorder: true,
       onTap: onTap,
       child: Row(
         children: [
@@ -326,17 +327,27 @@ class _TaskCard extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.child,
+    this.showBorder = false,
   });
   final Color? color;
   final VoidCallback onTap;
   final Widget child;
+  final bool showBorder;
 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
     child: Material(
       color: Theme.of(context).colorScheme.surface,
-      borderRadius: BorderRadius.circular(15),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15),
+        side: showBorder
+            ? BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant,
+                width: 0.8,
+              )
+            : BorderSide.none,
+      ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
@@ -420,7 +431,6 @@ class _AddTaskPanel extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (runningTasks.isNotEmpty) ...[
-              const _SectionHeading(title: 'IN PROGRESS'),
               ConstrainedBox(
                 constraints: BoxConstraints(
                   maxHeight: MediaQuery.viewInsetsOf(context).bottom > 0
