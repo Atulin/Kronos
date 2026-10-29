@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 class DateTimeWheelPicker extends StatefulWidget {
@@ -67,6 +66,12 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final wheelTextStyle = Theme.of(context).textTheme.titleLarge!.copyWith(
+      color: colors.onSurface,
+      fontSize: 28,
+      fontWeight: FontWeight.w400,
+      height: 1,
+    );
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 24),
       child: ConstrainedBox(
@@ -95,87 +100,63 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
               const SizedBox(height: 8),
               SizedBox(
                 height: 264,
-                child: CupertinoTheme(
-                  data: CupertinoThemeData(
-                    brightness: Theme.of(context).brightness,
-                    primaryColor: colors.primary,
-                    textTheme: CupertinoTextThemeData(
-                      dateTimePickerTextStyle: TextStyle(
-                        color: colors.onSurface,
-                        fontSize: 28,
-                        height: 1,
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 6,
+                      child: _wheel(
+                        context,
+                        controller: _dateController,
+                        childCount: _dateCount,
+                        onSelectedItemChanged: (index) => setState(() {
+                          _selectedDate = _firstDate.add(Duration(days: index));
+                        }),
+                        itemBuilder: (context, index) {
+                          final date = _firstDate.add(Duration(days: index));
+                          return Text(
+                            _formatWheelDate(date),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: wheelTextStyle,
+                          );
+                        },
                       ),
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: 6,
-                        child: _wheel(
-                          context,
-                          controller: _dateController,
-                          childCount: _dateCount,
-                          onSelectedItemChanged: (index) => setState(() {
-                            _selectedDate = _firstDate.add(
-                              Duration(days: index),
-                            );
-                          }),
-                          itemBuilder: (context, index) {
-                            final date = _firstDate.add(Duration(days: index));
-                            return Text(
-                              _formatWheelDate(date),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: CupertinoTheme.of(
-                                context,
-                              ).textTheme.dateTimePickerTextStyle,
-                            );
-                          },
+                    const SizedBox(width: 6),
+                    Expanded(
+                      flex: 2,
+                      child: _wheel(
+                        context,
+                        controller: _hourController,
+                        itemBuilder: (context, index) => Text(
+                          _pad(index % 24),
+                          textAlign: TextAlign.center,
+                          style: wheelTextStyle,
                         ),
+                        onSelectedItemChanged: (index) =>
+                            setState(() => _selectedHour = index % 24),
                       ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        flex: 2,
-                        child: _wheel(
-                          context,
-                          controller: _hourController,
-                          itemBuilder: (context, index) => Text(
-                            _pad(index % 24),
-                            textAlign: TextAlign.center,
-                            style: CupertinoTheme.of(
-                              context,
-                            ).textTheme.dateTimePickerTextStyle,
-                          ),
-                          onSelectedItemChanged: (index) =>
-                              setState(() => _selectedHour = index % 24),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: Text(':', style: wheelTextStyle),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: _wheel(
+                        context,
+                        controller: _minuteController,
+                        itemBuilder: (context, index) => Text(
+                          _pad(index % 60),
+                          textAlign: TextAlign.center,
+                          style: wheelTextStyle,
                         ),
+                        onSelectedItemChanged: (index) =>
+                            setState(() => _selectedMinute = index % 60),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 2),
-                        child: Text(
-                          ':',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                      ),
-                      Expanded(
-                        flex: 2,
-                        child: _wheel(
-                          context,
-                          controller: _minuteController,
-                          itemBuilder: (context, index) => Text(
-                            _pad(index % 60),
-                            textAlign: TextAlign.center,
-                            style: CupertinoTheme.of(
-                              context,
-                            ).textTheme.dateTimePickerTextStyle,
-                          ),
-                          onSelectedItemChanged: (index) =>
-                              setState(() => _selectedMinute = index % 60),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ],
