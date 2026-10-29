@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../domain/task_filter.dart';
+import 'date_time_wheel_picker.dart';
 
 class SearchFilterSheet extends StatefulWidget {
   const SearchFilterSheet({super.key, required this.initialFilter});
@@ -148,29 +149,14 @@ class _SearchFilterSheetState extends State<SearchFilterSheet> {
   Future<void> _selectDateTime({required bool isLowerBound}) async {
     final current = isLowerBound ? _startedAfter : _startedBefore;
     final initial = current ?? DateTime.now();
-    final date = await showDatePicker(
+    final selected = await showDialog<DateTime>(
       context: context,
-      initialDate: initial,
-      firstDate: DateTime(1900),
-      lastDate: DateTime(2100),
-      helpText: isLowerBound
-          ? 'SELECT STARTING AFTER'
-          : 'SELECT STARTING BEFORE',
+      builder: (_) => DateTimeWheelPicker(
+        initialDateTime: initial,
+        title: isLowerBound ? 'Started after' : 'Started before',
+      ),
     );
-    if (date == null || !mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-    );
-    if (time == null || !mounted) return;
-
-    final selected = DateTime(
-      date.year,
-      date.month,
-      date.day,
-      time.hour,
-      time.minute,
-    );
+    if (selected == null || !mounted) return;
     if (isLowerBound &&
         _startedBefore != null &&
         selected.isAfter(_startedBefore!)) {

@@ -503,42 +503,17 @@ class _AddTaskPanel extends StatelessWidget {
                 ),
               ),
             ],
-            if (focusNode.hasFocus && suggestions.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 160),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: suggestions.length,
-                  itemBuilder: (context, index) => ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.history_rounded, size: 20),
-                    title: Text(suggestions[index]),
-                    onTap: () => onSuggestion(suggestions[index]),
-                  ),
-                ),
-              ),
             Row(
               children: [
                 Expanded(
-                  child: TextField(
+                  child: _SuggestionTextField(
                     controller: controller,
                     focusNode: focusNode,
+                    suggestions: suggestions,
                     onChanged: onChanged,
                     onSubmitted: (_) => onStart(),
+                    onSuggestion: onSuggestion,
                     textCapitalization: TextCapitalization.sentences,
-                    decoration: InputDecoration(
-                      hintText: 'What are you working on?',
-                      prefixIcon: const Icon(Icons.add_task_rounded),
-                      filled: true,
-                      fillColor: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(15),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -551,6 +526,135 @@ class _AddTaskPanel extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _SuggestionTextField extends StatefulWidget {
+  const _SuggestionTextField({
+    required this.controller,
+    required this.focusNode,
+    required this.suggestions,
+    required this.onChanged,
+    required this.onSubmitted,
+    required this.onSuggestion,
+    required this.textCapitalization,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final List<String> suggestions;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onSubmitted;
+  final ValueChanged<String> onSuggestion;
+  final TextCapitalization textCapitalization;
+
+  @override
+  State<_SuggestionTextField> createState() => _SuggestionTextFieldState();
+}
+
+class _SuggestionTextFieldState extends State<_SuggestionTextField> {
+  final _portalController = OverlayPortalController();
+  final _layerLink = LayerLink();
+  bool _portalVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.focusNode.addListener(_syncPortalVisibility);
+  }
+
+  @override
+  void didUpdateWidget(covariant _SuggestionTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final focusNodeChanged = oldWidget.focusNode != widget.focusNode;
+    if (focusNodeChanged) {
+      oldWidget.focusNode.removeListener(_syncPortalVisibility);
+      widget.focusNode.addListener(_syncPortalVisibility);
+    }
+    final suggestionsBecameAvailable =
+        oldWidget.suggestions.isEmpty != widget.suggestions.isEmpty;
+    if (focusNodeChanged || suggestionsBecameAvailable) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncPortalVisibility();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.focusNode.removeListener(_syncPortalVisibility);
+    super.dispose();
+  }
+
+  void _syncPortalVisibility() {
+    final shouldShow =
+        widget.focusNode.hasFocus && widget.suggestions.isNotEmpty;
+    if (shouldShow == _portalVisible) return;
+    _portalVisible = shouldShow;
+    if (shouldShow) {
+      _portalController.show();
+    } else {
+      _portalController.hide();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) => OverlayPortal(
+      controller: _portalController,
+      overlayChildBuilder: (overlayContext) => CompositedTransformFollower(
+        link: _layerLink,
+        targetAnchor: Alignment.topLeft,
+        followerAnchor: Alignment.bottomLeft,
+        offset: const Offset(0, -8),
+        showWhenUnlinked: false,
+        child: TextFieldTapRegion(
+          child: SizedBox(
+            width: constraints.maxWidth,
+            child: Material(
+              color: Theme.of(overlayContext).colorScheme.surface,
+              elevation: 12,
+              borderRadius: BorderRadius.circular(14),
+              clipBehavior: Clip.antiAlias,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 160),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: widget.suggestions.length,
+                  itemBuilder: (context, index) => ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.history_rounded, size: 20),
+                    title: Text(widget.suggestions[index]),
+                    onTap: () => widget.onSuggestion(widget.suggestions[index]),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+      child: CompositedTransformTarget(
+        link: _layerLink,
+        child: TextField(
+          controller: widget.controller,
+          focusNode: widget.focusNode,
+          onChanged: widget.onChanged,
+          onSubmitted: widget.onSubmitted,
+          textCapitalization: widget.textCapitalization,
+          decoration: InputDecoration(
+            hintText: 'What are you working on?',
+            prefixIcon: const Icon(Icons.add_task_rounded),
+            filled: true,
+            fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(15),
+              borderSide: BorderSide.none,
+            ),
+            contentPadding: const EdgeInsets.symmetric(vertical: 14),
+          ),
         ),
       ),
     ),

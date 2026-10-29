@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 import '../domain/task.dart';
+import 'date_time_wheel_picker.dart';
 import 'task_view_model.dart';
 
 class TaskDetailsPage extends StatefulWidget {
@@ -44,28 +45,14 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
 
   Future<void> _selectDateTime({required bool isStart}) async {
     final initial = isStart ? _start : (_end ?? DateTime.now());
-    final firstDate = DateTime(2000);
-    final lastDate = DateTime.now().add(const Duration(days: 365 * 20));
-    final pickedDate = await showDatePicker(
+    final value = await showDialog<DateTime>(
       context: context,
-      initialDate: initial,
-      firstDate: firstDate,
-      lastDate: lastDate,
-      helpText: isStart ? 'SELECT START DATE' : 'SELECT END DATE',
+      builder: (_) => DateTimeWheelPicker(
+        initialDateTime: initial,
+        title: isStart ? 'Start time' : 'End time',
+      ),
     );
-    if (pickedDate == null || !mounted) return;
-    final pickedTime = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-    );
-    if (pickedTime == null || !mounted) return;
-    final value = DateTime(
-      pickedDate.year,
-      pickedDate.month,
-      pickedDate.day,
-      pickedTime.hour,
-      pickedTime.minute,
-    );
+    if (value == null || !mounted) return;
     if (isStart) {
       if (_end != null && value.isAfter(_end!)) {
         _showMessage('Start time must be before the end time.');

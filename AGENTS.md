@@ -28,6 +28,10 @@ The user should have an option to enable biometrics (fingerprint, face, etc.) to
 be encrypted with said biometrics, and decrypted only on valid unlock. The user should be notified explicitly that their data will be encrypted and unrecoverable
 in case of lost biometrics, if biometrics is enabled.
 
+An analytics screen should allow the user to see the average duration of a given task, median, minimum, and maximum. It should also contain a bar graph showing the
+duration change over time. All should be calculated for a given time period (day, week, month, year, total, custom range). Another analytics option should be to show
+the same kinds of analytics, but for duration between the instances of the given task, from the end of one to the start of another.
+
 All data should be persisted across app and device restarts.
 
 ### Color palette
@@ -46,8 +50,9 @@ We will be following the milestones one by one. Once you've completed one, stop 
 1. Basic functionality – add tasks, see tasks in progress, see completed tasks, task details, delete tasks, edit tasks.
 2. Search and filtering
 3. Backup and restore
-4. Biometrics and backup encryption
-5. F-Droid release
+4. Analytics
+5. Biometrics and backup encryption
+6. F-Droid release
 
 ## Instructions
 

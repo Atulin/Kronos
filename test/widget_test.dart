@@ -104,6 +104,29 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('task edit opens date, hour, and minute wheels together', (
+    tester,
+  ) async {
+    final repository = _MemoryTaskRepository();
+    final viewModel = TaskViewModel(repository);
+    await viewModel.startTask('Planning');
+    await tester.pumpWidget(KronosApp(viewModel: viewModel));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.text('Planning'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Started'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ListWheelScrollView), findsNWidgets(3));
+    expect(find.text('Cancel'), findsOneWidget);
+    expect(find.text('Done'), findsOneWidget);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('separates running tasks with a divider but no heading', (
     tester,
   ) async {
@@ -122,6 +145,30 @@ void main() {
     expect(divider.thickness, 1);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets(
+    'autocomplete overlays the input without shifting running tasks',
+    (tester) async {
+      final repository = _MemoryTaskRepository();
+      final viewModel = TaskViewModel(repository);
+      await viewModel.startTask('Planning');
+      await viewModel.startTask('Review');
+      await tester.pumpWidget(KronosApp(viewModel: viewModel));
+      await tester.pump();
+      await tester.pump();
+
+      final runningTaskStop = find.byTooltip('Stop Planning');
+      final topBeforeSuggestions = tester.getTopLeft(runningTaskStop).dy;
+      await tester.enterText(find.byType(TextField), 'Plan');
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byIcon(Icons.history_rounded), findsOneWidget);
+      expect(find.text('Planning'), findsNWidgets(2));
+      expect(tester.getTopLeft(runningTaskStop).dy, topBeforeSuggestions);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets('search filters completed tasks by name', (tester) async {
     final repository = _MemoryTaskRepository();
