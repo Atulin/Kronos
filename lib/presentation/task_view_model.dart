@@ -13,29 +13,34 @@ class TaskViewModel extends ChangeNotifier {
     );
   }
 
+  static const pageSize = 75;
+
   final TaskRepository _repository;
   late final Timer _clock;
-  List<Task> _tasks = [];
+  List<Task> _runningTasks = [];
+  List<Task> _completedTasks = [];
+  List<String> _taskNames = [];
   Map<String, int> _colors = {};
+  TaskCursor? _completedCursor;
+  ThemeMode _themeMode = ThemeMode.system;
+  bool _hasMoreCompleted = false;
+  bool _isLoadingMore = false;
   bool _isLoaded = false;
 
-  List<Task> get tasks => List.unmodifiable(_tasks);
+  List<Task> get runningTasks => List.unmodifiable(_runningTasks);
+  List<Task> get completedTasks => List.unmodifiable(_completedTasks);
   bool get isLoaded => _isLoaded;
+  bool get hasMoreCompleted => _hasMoreCompleted;
+  bool get isLoadingMore => _isLoadingMore;
+  ThemeMode get themeMode => _themeMode;
   DateTime get now => DateTime.now();
-
-  List<Task> get runningTasks =>
-      _tasks.where((task) => task.isRunning).toList()
-        ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
-
-  List<Task> get completedTasks =>
-      _tasks.where((task) => !task.isRunning).toList()
-        ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
 
   List<String> suggestionsFor(String input) {
     final query = input.trim().toLowerCase();
     if (query.isEmpty) return const [];
-    final names = _tasks.map((task) => task.name).toSet();
-    return names.where((name) => name.toLowerCase().contains(query)).toList()
+    return _taskNames
+        .where((name) => name.toLowerCase().contains(query))
+        .toList()
       ..sort((a, b) {
         final aPrefix = a.toLowerCase().startsWith(query);
         final bPrefix = b.toLowerCase().startsWith(query);
@@ -44,26 +49,58 @@ class TaskViewModel extends ChangeNotifier {
       });
   }
 
-  Color colorFor(String name) {
+  Color? colorFor(String name) {
     final stored = _colors[taskColorKey(name)];
-    if (stored != null) return Color(stored);
-    final index = taskColorKey(name).hashCode.abs() % taskColors.length;
-    return taskColors[index];
+    return stored == null ? null : Color(stored);
   }
 
   Future<void> load() async {
-    final data = await _repository.load();
-    _tasks = data.tasks;
+    final data = await _repository.loadInitial(pageSize: pageSize);
+    final savedThemeMode = await _repository.loadThemeMode();
+    _runningTasks = data.runningTasks;
+    _completedTasks = data.completedPage.tasks;
+    _completedCursor = data.completedPage.nextCursor;
+    _hasMoreCompleted = data.completedPage.hasMore;
+    _taskNames = data.taskNames;
     _colors = data.colors;
+    _themeMode = _themeModeFromName(savedThemeMode);
     _isLoaded = true;
     notifyListeners();
+  }
+
+  Future<void> loadMoreCompleted() async {
+    if (!_isLoaded || !_hasMoreCompleted || _isLoadingMore) return;
+    _isLoadingMore = true;
+    notifyListeners();
+    try {
+      final page = await _repository.loadCompletedPage(
+        pageSize: pageSize,
+        before: _completedCursor,
+      );
+      final loadedIds = _completedTasks.map((task) => task.id).toSet();
+      _completedTasks = [
+        ..._completedTasks,
+        ...page.tasks.where((task) => loadedIds.add(task.id)),
+      ];
+      _completedCursor = page.nextCursor;
+      _hasMoreCompleted = page.hasMore;
+    } finally {
+      _isLoadingMore = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    if (_themeMode == mode) return;
+    _themeMode = mode;
+    notifyListeners();
+    await _repository.saveThemeMode(mode.name);
   }
 
   Future<void> startTask(String name) async {
     final cleanName = name.trim();
     if (cleanName.isEmpty) return;
-    final existingName = _tasks
-        .map((task) => task.name)
+    final existingName = _taskNames
         .where((taskName) => taskName.toLowerCase() == cleanName.toLowerCase())
         .firstOrNull;
     final task = Task(
@@ -71,46 +108,73 @@ class TaskViewModel extends ChangeNotifier {
       name: existingName ?? cleanName,
       startedAt: DateTime.now(),
     );
-    _tasks = [..._tasks, task];
+    _runningTasks = [..._runningTasks, task]..sort(_compareRunning);
+    if (existingName == null) _taskNames = [..._taskNames, cleanName];
     await _persistTask(task);
   }
 
   Future<void> stopTask(Task task) async {
     final stopped = task.copyWith(endedAt: DateTime.now());
-    _replace(stopped);
+    _runningTasks = _runningTasks.where((item) => item.id != task.id).toList();
+    _insertCompleted(stopped);
     await _persistTask(stopped);
   }
 
   Future<void> deleteTask(Task task) async {
-    _tasks = _tasks.where((item) => item.id != task.id).toList();
+    _runningTasks = _runningTasks.where((item) => item.id != task.id).toList();
+    _completedTasks = _completedTasks
+        .where((item) => item.id != task.id)
+        .toList();
     notifyListeners();
     await _repository.deleteTask(task.id);
+    _taskNames = await _repository.loadTaskNames();
+    notifyListeners();
   }
 
-  Future<void> updateTask(Task updated, {Color? color}) async {
+  Future<void> updateTask(Task updated, {required Color? color}) async {
     if (updated.name.trim().isEmpty) return;
-    final old = _tasks.firstWhere((task) => task.id == updated.id);
-    final name = updated.name.trim();
-    final savedTask = updated.copyWith(name: name);
-    _replace(savedTask);
-    final int? colorValue =
-        color?.toARGB32() ?? _colors[taskColorKey(old.name)];
-    if (colorValue != null) {
-      _colors[taskColorKey(name)] = colorValue;
+    final savedTask = updated.copyWith(name: updated.name.trim());
+    _runningTasks = _runningTasks
+        .where((task) => task.id != savedTask.id)
+        .toList();
+    _completedTasks = _completedTasks
+        .where((task) => task.id != savedTask.id)
+        .toList();
+    if (savedTask.isRunning) {
+      _runningTasks = [..._runningTasks, savedTask]..sort(_compareRunning);
+    } else {
+      _insertCompleted(savedTask);
+    }
+
+    final colorKey = taskColorKey(savedTask.name);
+    if (color == null) {
+      _colors.remove(colorKey);
+    } else {
+      _colors[colorKey] = color.toARGB32();
     }
     notifyListeners();
     await _repository.saveTask(
       savedTask,
-      colorKey: colorValue == null ? null : taskColorKey(name),
-      colorValue: colorValue,
+      colorKey: colorKey,
+      colorValue: color?.toARGB32(),
+      clearColor: color == null,
     );
+    _taskNames = await _repository.loadTaskNames();
+    notifyListeners();
   }
 
-  void _replace(Task replacement) {
-    _tasks = _tasks
-        .map((task) => task.id == replacement.id ? replacement : task)
-        .toList();
-    notifyListeners();
+  void _insertCompleted(Task task) {
+    _completedTasks = [..._completedTasks, task]..sort(_compareCompleted);
+  }
+
+  int _compareRunning(Task a, Task b) {
+    final byStart = a.startedAt.compareTo(b.startedAt);
+    return byStart != 0 ? byStart : a.id.compareTo(b.id);
+  }
+
+  int _compareCompleted(Task a, Task b) {
+    final byStart = b.startedAt.compareTo(a.startedAt);
+    return byStart != 0 ? byStart : b.id.compareTo(a.id);
   }
 
   Future<void> _persistTask(Task task) async {
@@ -122,6 +186,12 @@ class TaskViewModel extends ChangeNotifier {
       colorValue: color,
     );
   }
+
+  ThemeMode _themeModeFromName(String? value) => switch (value) {
+    'light' => ThemeMode.light,
+    'dark' => ThemeMode.dark,
+    _ => ThemeMode.system,
+  };
 
   @override
   void dispose() {

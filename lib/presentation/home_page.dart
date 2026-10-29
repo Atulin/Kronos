@@ -1,13 +1,21 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../domain/task.dart';
+import 'settings_page.dart';
 import 'task_details_page.dart';
 import 'task_view_model.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.viewModel});
+  const HomePage({
+    super.key,
+    required this.viewModel,
+    required this.onThemeModeChanged,
+  });
 
   final TaskViewModel viewModel;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -48,6 +56,21 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Settings',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => SettingsPage(
+                  themeMode: widget.viewModel.themeMode,
+                  onThemeModeChanged: widget.onThemeModeChanged,
+                ),
+              ),
+            ),
+            icon: const Icon(Icons.settings_outlined),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: ListenableBuilder(
         listenable: widget.viewModel,
@@ -70,69 +93,73 @@ class _HomePageState extends State<HomePage> {
           return Column(
             children: [
               Expanded(
-                child: CustomScrollView(
-                  key: const Key('task-list'),
-                  slivers: [
-                    if (running.isNotEmpty) ...[
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification.metrics.extentAfter < 400 &&
+                        widget.viewModel.hasMoreCompleted) {
+                      unawaited(widget.viewModel.loadMoreCompleted());
+                    }
+                    return false;
+                  },
+                  child: CustomScrollView(
+                    key: const Key('task-list'),
+                    slivers: [
                       const SliverToBoxAdapter(
-                        child: _SectionHeading(title: 'IN PROGRESS'),
+                        child: _SectionHeading(title: 'COMPLETED'),
                       ),
-                      SliverList.builder(
-                        itemCount: running.length,
-                        itemBuilder: (context, index) => _RunningTaskTile(
-                          task: running[index],
-                          color: widget.viewModel.colorFor(running[index].name),
-                          onStop: () =>
-                              widget.viewModel.stopTask(running[index]),
-                          onTap: () => _openDetails(context, running[index]),
-                          onDelete: () =>
-                              _confirmDelete(context, running[index]),
-                          now: widget.viewModel.now,
-                        ),
-                      ),
-                    ],
-                    const SliverToBoxAdapter(
-                      child: _SectionHeading(title: 'COMPLETED'),
-                    ),
-                    if (completed.isEmpty)
-                      SliverToBoxAdapter(
-                        child: _EmptyCompleted(hasRunning: running.isNotEmpty),
-                      )
-                    else
-                      for (final entry in grouped.entries) ...[
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(22, 12, 22, 5),
-                            child: Text(
-                              _dateLabel(entry.key),
-                              style: Theme.of(context).textTheme.labelMedium
-                                  ?.copyWith(
-                                    color: const Color(0xFF75817D),
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                      if (completed.isEmpty)
+                        const SliverToBoxAdapter(child: _EmptyCompleted())
+                      else
+                        for (final entry in grouped.entries) ...[
+                          SliverToBoxAdapter(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(22, 12, 22, 5),
+                              child: Text(
+                                _dateLabel(entry.key),
+                                style: Theme.of(context).textTheme.labelMedium
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                              ),
                             ),
                           ),
+                          SliverList.builder(
+                            itemCount: entry.value.length,
+                            itemBuilder: (context, index) {
+                              final task = entry.value[index];
+                              return _CompletedTaskTile(
+                                task: task,
+                                color: widget.viewModel.colorFor(task.name),
+                                onTap: () => _openDetails(context, task),
+                                onDelete: () => _confirmDelete(context, task),
+                              );
+                            },
+                          ),
+                        ],
+                      if (widget.viewModel.isLoadingMore)
+                        const SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.all(20),
+                            child: Center(child: CircularProgressIndicator()),
+                          ),
                         ),
-                        SliverList.builder(
-                          itemCount: entry.value.length,
-                          itemBuilder: (context, index) {
-                            final task = entry.value[index];
-                            return _CompletedTaskTile(
-                              task: task,
-                              color: widget.viewModel.colorFor(task.name),
-                              onTap: () => _openDetails(context, task),
-                              onDelete: () => _confirmDelete(context, task),
-                            );
-                          },
-                        ),
-                      ],
-                    const SliverToBoxAdapter(child: SizedBox(height: 20)),
-                  ],
+                      const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                    ],
+                  ),
                 ),
               ),
               _AddTaskPanel(
                 controller: _input,
                 focusNode: _focus,
+                runningTasks: running,
+                colorFor: widget.viewModel.colorFor,
+                now: widget.viewModel.now,
+                onStop: widget.viewModel.stopTask,
+                onOpen: (task) => _openDetails(context, task),
+                onDelete: (task) => _confirmDelete(context, task),
                 suggestions: widget.viewModel.suggestionsFor(_input.text),
                 onChanged: (_) => setState(() {}),
                 onStart: () => _start(_input.text),
@@ -193,7 +220,7 @@ class _SectionHeading extends StatelessWidget {
     child: Text(
       title,
       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-        color: const Color(0xFF75817D),
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
         letterSpacing: 1.15,
         fontWeight: FontWeight.w700,
       ),
@@ -212,7 +239,7 @@ class _RunningTaskTile extends StatelessWidget {
   });
 
   final Task task;
-  final Color color;
+  final Color? color;
   final VoidCallback onStop;
   final VoidCallback onTap;
   final VoidCallback onDelete;
@@ -259,7 +286,7 @@ class _CompletedTaskTile extends StatelessWidget {
     required this.onDelete,
   });
   final Task task;
-  final Color color;
+  final Color? color;
   final VoidCallback onTap;
   final VoidCallback onDelete;
 
@@ -284,7 +311,10 @@ class _CompletedTaskTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          const Icon(Icons.chevron_right_rounded, color: Color(0xFF9AA39F)),
+          Icon(
+            Icons.chevron_right_rounded,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ],
       ),
     ),
@@ -297,7 +327,7 @@ class _TaskCard extends StatelessWidget {
     required this.onTap,
     required this.child,
   });
-  final Color color;
+  final Color? color;
   final VoidCallback onTap;
   final Widget child;
 
@@ -305,14 +335,14 @@ class _TaskCard extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
     child: Material(
-      color: Colors.white,
+      color: Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(15),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: Row(
           children: [
-            Container(width: 5, height: 58, color: color),
+            Container(width: 5, height: 58, color: color ?? Colors.transparent),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
@@ -327,8 +357,7 @@ class _TaskCard extends StatelessWidget {
 }
 
 class _EmptyCompleted extends StatelessWidget {
-  const _EmptyCompleted({required this.hasRunning});
-  final bool hasRunning;
+  const _EmptyCompleted();
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(24, 35, 24, 35),
@@ -337,12 +366,14 @@ class _EmptyCompleted extends StatelessWidget {
         Icon(
           Icons.hourglass_empty_rounded,
           size: 32,
-          color: Colors.blueGrey.shade300,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
         const SizedBox(height: 10),
         Text(
-          hasRunning ? 'Nothing completed yet' : 'Start something to get going',
-          style: const TextStyle(color: Color(0xFF78837F)),
+          'No completed tasks yet',
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
       ],
     ),
@@ -353,6 +384,12 @@ class _AddTaskPanel extends StatelessWidget {
   const _AddTaskPanel({
     required this.controller,
     required this.focusNode,
+    required this.runningTasks,
+    required this.colorFor,
+    required this.now,
+    required this.onStop,
+    required this.onOpen,
+    required this.onDelete,
     required this.suggestions,
     required this.onChanged,
     required this.onStart,
@@ -360,6 +397,12 @@ class _AddTaskPanel extends StatelessWidget {
   });
   final TextEditingController controller;
   final FocusNode focusNode;
+  final List<Task> runningTasks;
+  final Color? Function(String name) colorFor;
+  final DateTime now;
+  final ValueChanged<Task> onStop;
+  final ValueChanged<Task> onOpen;
+  final ValueChanged<Task> onDelete;
   final List<String> suggestions;
   final ValueChanged<String> onChanged;
   final VoidCallback onStart;
@@ -367,7 +410,7 @@ class _AddTaskPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: Colors.white,
+    color: Theme.of(context).colorScheme.surface,
     elevation: 8,
     child: SafeArea(
       top: false,
@@ -376,6 +419,31 @@ class _AddTaskPanel extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (runningTasks.isNotEmpty) ...[
+              const _SectionHeading(title: 'IN PROGRESS'),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.viewInsetsOf(context).bottom > 0
+                      ? 90
+                      : 190,
+                ),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: runningTasks.length,
+                  itemBuilder: (context, index) {
+                    final task = runningTasks[index];
+                    return _RunningTaskTile(
+                      task: task,
+                      color: colorFor(task.name),
+                      now: now,
+                      onStop: () => onStop(task),
+                      onTap: () => onOpen(task),
+                      onDelete: () => onDelete(task),
+                    );
+                  },
+                ),
+              ),
+            ],
             if (focusNode.hasFocus && suggestions.isNotEmpty)
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 160),
@@ -403,7 +471,9 @@ class _AddTaskPanel extends StatelessWidget {
                       hintText: 'What are you working on?',
                       prefixIcon: const Icon(Icons.add_task_rounded),
                       filled: true,
-                      fillColor: const Color(0xFFF4F6F4),
+                      fillColor: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(15),
                         borderSide: BorderSide.none,

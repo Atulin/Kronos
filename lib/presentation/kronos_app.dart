@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app_theme.dart';
 import 'home_page.dart';
 import 'task_view_model.dart';
 
@@ -13,10 +14,14 @@ class KronosApp extends StatefulWidget {
 }
 
 class _KronosAppState extends State<KronosApp> {
+  ThemeMode _themeMode = ThemeMode.system;
+
   @override
   void initState() {
     super.initState();
-    widget.viewModel.load();
+    widget.viewModel.load().then((_) {
+      if (mounted) setState(() => _themeMode = widget.viewModel.themeMode);
+    });
   }
 
   @override
@@ -27,30 +32,19 @@ class _KronosAppState extends State<KronosApp> {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF315E65);
     return MaterialApp(
       title: 'Kronos',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: seed,
-          brightness: Brightness.light,
-        ),
-        scaffoldBackgroundColor: const Color(0xFFF6F7F5),
-        useMaterial3: true,
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFFF6F7F5),
-          surfaceTintColor: Colors.transparent,
-        ),
-        cardTheme: CardThemeData(
-          color: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-          ),
-        ),
+      theme: buildLightTheme(),
+      darkTheme: buildDarkTheme(),
+      themeMode: _themeMode,
+      home: HomePage(
+        viewModel: widget.viewModel,
+        onThemeModeChanged: (mode) {
+          setState(() => _themeMode = mode);
+          widget.viewModel.setThemeMode(mode);
+        },
       ),
-      home: HomePage(viewModel: widget.viewModel),
     );
   }
 }

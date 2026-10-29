@@ -16,6 +16,6 @@ tasks:
       - sbx secret set github --sandbox '{{.AGENT_NAME}}' --command "gh auth token"
       - sbx run --name '{{.AGENT_NAME}}' -e GITHUB_TOKEN=proxy-managed .
 
-  release: git tag -a "v{{.APP_VERSION}}" -m "Release v{{.APP_VERSION}}" && git push origin "v{{.APP_VERSION}}"
+  release: git tag -s -a "v{{.APP_VERSION}}" -m "Release v{{.APP_VERSION}}" && git push origin "v{{.APP_VERSION}}"
 
   test: sbx ls

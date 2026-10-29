@@ -20,7 +20,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
   late final TextEditingController _name;
   late DateTime _start;
   late DateTime? _end;
-  late Color _color;
+  Color? _color;
   bool _saving = false;
 
   @override
@@ -182,6 +182,16 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
             spacing: 12,
             runSpacing: 12,
             children: [
+              ChoiceChip(
+                avatar: Icon(
+                  Icons.block_rounded,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                label: const Text('No color'),
+                selected: _color == null,
+                onSelected: (_) => setState(() => _color = null),
+              ),
               for (final color in taskColors)
                 InkWell(
                   onTap: () => setState(() => _color = color),
@@ -192,14 +202,14 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
                     decoration: BoxDecoration(
                       color: color,
                       shape: BoxShape.circle,
-                      border: _color.toARGB32() == color.toARGB32()
+                      border: _color?.toARGB32() == color.toARGB32()
                           ? Border.all(
                               color: Theme.of(context).colorScheme.onSurface,
                               width: 3,
                             )
                           : null,
                     ),
-                    child: _color.toARGB32() == color.toARGB32()
+                    child: _color?.toARGB32() == color.toARGB32()
                         ? const Icon(
                             Icons.check_rounded,
                             color: Colors.white,

@@ -30,6 +30,15 @@ in case of lost biometrics, if biometrics is enabled.
 
 All data should be persisted across app and device restarts.
 
+### Color palette
+
+- Dark mode
+  - Background: `#0D0D0D`
+  - Light background: `#373438`
+  - Brand color: `#2C6581`
+  - Bright accent: `#05F2DB`
+  - Subtle accent: `#4EABBF`
+
 ## Milestones
 
 We will be following the milestones one by one. Once you've completed one, stop and wait for the user's go-ahead or comments, suggestions, and reported bugs.

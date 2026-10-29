@@ -3,11 +3,50 @@ import 'package:sqflite/sqflite.dart';
 
 import '../domain/task.dart';
 
-typedef TaskData = ({List<Task> tasks, Map<String, int> colors});
+class TaskCursor {
+  const TaskCursor({required this.startedAt, required this.id});
+
+  final DateTime startedAt;
+  final String id;
+}
+
+class TaskPage {
+  const TaskPage({required this.tasks, required this.hasMore, this.nextCursor});
+
+  final List<Task> tasks;
+  final bool hasMore;
+  final TaskCursor? nextCursor;
+}
+
+class InitialTaskData {
+  const InitialTaskData({
+    required this.runningTasks,
+    required this.completedPage,
+    required this.taskNames,
+    required this.colors,
+  });
+
+  final List<Task> runningTasks;
+  final TaskPage completedPage;
+  final List<String> taskNames;
+  final Map<String, int> colors;
+}
 
 abstract interface class TaskRepository {
-  Future<TaskData> load();
-  Future<void> saveTask(Task task, {String? colorKey, int? colorValue});
+  Future<InitialTaskData> loadInitial({required int pageSize});
+  Future<TaskPage> loadCompletedPage({
+    required int pageSize,
+    TaskCursor? before,
+  });
+  Future<List<String>> loadTaskNames();
+  Future<String?> loadThemeMode();
+  Future<void> saveThemeMode(String mode);
+  Future<void> saveTask(
+    Task task, {
+    String? colorKey,
+    int? colorValue,
+    bool clearColor = false,
+  });
   Future<void> deleteTask(String id);
 }
 
@@ -30,7 +69,7 @@ class SqliteTaskRepository implements TaskRepository {
     return _databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 2,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE tasks (
@@ -46,15 +85,43 @@ class SqliteTaskRepository implements TaskRepository {
           await db.execute(
             'CREATE INDEX tasks_ended_at_idx ON tasks(ended_at)',
           );
+          await _createPaginationIndexes(db);
           await db.execute('''
             CREATE TABLE task_colors (
               name_key TEXT PRIMARY KEY,
               argb INTEGER NOT NULL
             )
           ''');
+          await _createSettingsTable(db);
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await _createPaginationIndexes(db);
+            await _createSettingsTable(db);
+          }
         },
       ),
     );
+  }
+
+  static Future<void> _createPaginationIndexes(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS tasks_completed_cursor_idx '
+      'ON tasks(ended_at, started_at DESC, id DESC)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS tasks_running_order_idx '
+      'ON tasks(ended_at, started_at ASC, id ASC)',
+    );
+  }
+
+  static Future<void> _createSettingsTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    ''');
   }
 
   static Future<String> _defaultDatabasePath() async {
@@ -63,31 +130,112 @@ class SqliteTaskRepository implements TaskRepository {
   }
 
   @override
-  Future<TaskData> load() async {
+  Future<InitialTaskData> loadInitial({required int pageSize}) async {
     final db = await _db;
-    final taskRows = await db.query('tasks', orderBy: 'started_at DESC');
-    final colorRows = await db.query('task_colors');
-    final tasks = taskRows
-        .map(
-          (row) => Task(
-            id: row['id']! as String,
-            name: row['name']! as String,
-            startedAt: DateTime.parse(row['started_at']! as String),
-            endedAt: row['ended_at'] == null
-                ? null
-                : DateTime.parse(row['ended_at']! as String),
-          ),
-        )
-        .toList();
+    final results = await Future.wait([
+      db.query(
+        'tasks',
+        where: 'ended_at IS NULL',
+        orderBy: 'started_at ASC, id ASC',
+      ),
+      loadCompletedPage(pageSize: pageSize),
+      db.query('task_colors'),
+      loadTaskNames(),
+    ]);
+    final runningRows = results[0] as List<Map<String, Object?>>;
+    final completedPage = results[1] as TaskPage;
+    final colorRows = results[2] as List<Map<String, Object?>>;
+    final taskNames = results[3] as List<String>;
+    final runningTasks = runningRows.map(_taskFromRow).toList();
     final colors = {
       for (final row in colorRows)
         row['name_key']! as String: row['argb']! as int,
     };
-    return (tasks: tasks, colors: colors);
+    return InitialTaskData(
+      runningTasks: runningTasks,
+      completedPage: completedPage,
+      taskNames: taskNames,
+      colors: colors,
+    );
   }
 
   @override
-  Future<void> saveTask(Task task, {String? colorKey, int? colorValue}) async {
+  Future<TaskPage> loadCompletedPage({
+    required int pageSize,
+    TaskCursor? before,
+  }) async {
+    final db = await _db;
+    final where = before == null
+        ? 'ended_at IS NOT NULL'
+        : 'ended_at IS NOT NULL AND '
+              '(started_at < ? OR (started_at = ? AND id < ?))';
+    final whereArgs = before == null
+        ? null
+        : [
+            before.startedAt.toIso8601String(),
+            before.startedAt.toIso8601String(),
+            before.id,
+          ];
+    final rows = await db.query(
+      'tasks',
+      where: where,
+      whereArgs: whereArgs,
+      orderBy: 'started_at DESC, id DESC',
+      limit: pageSize + 1,
+    );
+    final hasMore = rows.length > pageSize;
+    final pageRows = hasMore ? rows.take(pageSize).toList() : rows;
+    final tasks = pageRows.map(_taskFromRow).toList();
+    return TaskPage(
+      tasks: tasks,
+      hasMore: hasMore,
+      nextCursor: hasMore && tasks.isNotEmpty
+          ? TaskCursor(startedAt: tasks.last.startedAt, id: tasks.last.id)
+          : null,
+    );
+  }
+
+  @override
+  Future<List<String>> loadTaskNames() async {
+    final db = await _db;
+    final rows = await db.query(
+      'tasks',
+      distinct: true,
+      columns: ['name'],
+      orderBy: 'name COLLATE NOCASE',
+    );
+    return rows.map((row) => row['name']! as String).toList();
+  }
+
+  @override
+  Future<String?> loadThemeMode() async {
+    final db = await _db;
+    final rows = await db.query(
+      'app_settings',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: ['theme_mode'],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.single['value']! as String;
+  }
+
+  @override
+  Future<void> saveThemeMode(String mode) async {
+    final db = await _db;
+    await db.insert('app_settings', {
+      'key': 'theme_mode',
+      'value': mode,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  @override
+  Future<void> saveTask(
+    Task task, {
+    String? colorKey,
+    int? colorValue,
+    bool clearColor = false,
+  }) async {
     final db = await _db;
     await db.transaction((transaction) async {
       await transaction.insert('tasks', {
@@ -101,6 +249,12 @@ class SqliteTaskRepository implements TaskRepository {
           'name_key': colorKey,
           'argb': colorValue,
         }, conflictAlgorithm: ConflictAlgorithm.replace);
+      } else if (clearColor && colorKey != null) {
+        await transaction.delete(
+          'task_colors',
+          where: 'name_key = ?',
+          whereArgs: [colorKey],
+        );
       }
     });
   }
@@ -118,4 +272,13 @@ class SqliteTaskRepository implements TaskRepository {
       _database = null;
     }
   }
+
+  static Task _taskFromRow(Map<String, Object?> row) => Task(
+    id: row['id']! as String,
+    name: row['name']! as String,
+    startedAt: DateTime.parse(row['started_at']! as String),
+    endedAt: row['ended_at'] == null
+        ? null
+        : DateTime.parse(row['ended_at']! as String),
+  );
 }
