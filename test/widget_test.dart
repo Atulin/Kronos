@@ -175,15 +175,17 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(find.byIcon(Icons.history_rounded), findsOneWidget);
+      final suggestionIcon = find.byIcon(Icons.history_rounded);
+      expect(suggestionIcon, findsOneWidget);
       expect(find.text('Foobar'), findsNWidgets(2));
       expect(tester.getTopLeft(runningTaskStop).dy, topBeforeSuggestions);
-      final suggestionTop = tester
-          .getTopLeft(find.byIcon(Icons.history_rounded))
-          .dy;
+      final suggestionTop = tester.getTopLeft(suggestionIcon).dy;
       final inputTop = tester.getTopLeft(input).dy;
       expect(suggestionTop, greaterThanOrEqualTo(0));
       expect(suggestionTop, lessThan(inputTop));
+      final singleSuggestion = find.widgetWithText(ListTile, 'Foobar');
+      expect(tester.getTopLeft(singleSuggestion).dy, greaterThanOrEqualTo(0));
+      expect(tester.getBottomRight(singleSuggestion).dy, lessThan(inputTop));
 
       await tester.enterText(input, 'fo');
       await tester.pump();

@@ -655,6 +655,8 @@ class _SuggestionTextFieldState extends State<_SuggestionTextField> {
                           borderRadius: BorderRadius.circular(14),
                           clipBehavior: Clip.antiAlias,
                           child: ListView.builder(
+                            primary: false,
+                            padding: EdgeInsets.zero,
                             itemExtent: 48,
                             itemCount: suggestions.length,
                             itemBuilder: (context, index) => ListTile(
