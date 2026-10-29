@@ -150,12 +150,12 @@ jobs:
         run: |
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk \
-            "dist/KemoShow-${RELEASE_TAG}-android.apk"
+            "dist/Kronos-${RELEASE_TAG}-android.apk"
 
       - uses: actions/upload-artifact@v7
         with:
           name: android-apk
-          path: dist/KemoShow-*-android.apk
+          path: dist/Kronos-*-android.apk
           if-no-files-found: error
 
   release:
@@ -175,7 +175,7 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: KemoShow ${{ env.RELEASE_TAG }}
+          name: Kronos ${{ env.RELEASE_TAG }}
           target_commitish: ${{ github.sha }}
           prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           generate_release_notes: true
