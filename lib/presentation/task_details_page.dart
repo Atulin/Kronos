@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 import '../domain/task.dart';
 import 'task_view_model.dart';
@@ -18,6 +19,7 @@ class TaskDetailsPage extends StatefulWidget {
 
 class _TaskDetailsPageState extends State<TaskDetailsPage> {
   late final TextEditingController _name;
+  late final TextEditingController _notes;
   late DateTime _start;
   late DateTime? _end;
   Color? _color;
@@ -27,6 +29,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.task.name);
+    _notes = TextEditingController(text: widget.task.notes);
     _start = widget.task.startedAt;
     _end = widget.task.endedAt;
     _color = widget.viewModel.colorFor(widget.task.name);
@@ -35,6 +38,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
   @override
   void dispose() {
     _name.dispose();
+    _notes.dispose();
     super.dispose();
   }
 
@@ -88,6 +92,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
       name: name,
       startedAt: _start,
       endedAt: _end,
+      notes: _notes.text,
       clearEndedAt: _end == null,
     );
     await widget.viewModel.updateTask(updated, color: _color);
@@ -200,15 +205,20 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
                         width: _color == null ? 3 : 1,
                       ),
                     ),
-                    child: const Icon(
-                      Icons.close_rounded,
-                      color: Color(0xFFD32F2F),
-                      size: 23,
+                    child: ClipOval(
+                      child: CustomPaint(
+                        key: const Key('no-color-cross'),
+                        size: const Size(38, 38),
+                        painter: _NoColorCrossPainter(),
+                      ),
                     ),
                   ),
                 ),
               ),
-              for (final color in taskColors)
+              for (final color in [
+                ...taskColors,
+                ...widget.viewModel.customColors,
+              ])
                 InkWell(
                   onTap: () => setState(() => _color = color),
                   customBorder: const CircleBorder(),
@@ -234,6 +244,24 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
                         : null,
                   ),
                 ),
+              Tooltip(
+                message: 'Add custom color',
+                child: InkWell(
+                  onTap: _addCustomColor,
+                  customBorder: const CircleBorder(),
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                    ),
+                    child: const Icon(Icons.add_rounded, size: 22),
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 40),
@@ -244,6 +272,22 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
             style: OutlinedButton.styleFrom(
               foregroundColor: Theme.of(context).colorScheme.error,
               padding: const EdgeInsets.symmetric(vertical: 15),
+            ),
+          ),
+          const SizedBox(height: 28),
+          Text('NOTES', style: _eyebrow(context)),
+          const SizedBox(height: 10),
+          TextField(
+            key: const Key('task-notes'),
+            controller: _notes,
+            minLines: 4,
+            maxLines: null,
+            keyboardType: TextInputType.multiline,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              hintText: 'Add notes about this task…',
+              alignLabelWithHint: true,
+              border: OutlineInputBorder(),
             ),
           ),
         ],
@@ -282,6 +326,45 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
     if (!context.mounted) return;
     Navigator.pop(context);
     messenger.showSnackBar(const SnackBar(content: Text('Task deleted')));
+  }
+
+  Future<void> _addCustomColor() async {
+    var pickerColor = _color ?? taskColors.first;
+    final pickerWidth = (MediaQuery.sizeOf(context).width - 128)
+        .clamp(180.0, 280.0)
+        .toDouble();
+    final selected = await showDialog<Color>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add custom color'),
+          content: SingleChildScrollView(
+            child: ColorPicker(
+              pickerColor: pickerColor,
+              onColorChanged: (color) =>
+                  setDialogState(() => pickerColor = color),
+              enableAlpha: false,
+              labelTypes: const [],
+              colorPickerWidth: pickerWidth,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, pickerColor),
+              child: const Text('Add swatch'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    await widget.viewModel.addCustomColor(selected);
+    if (!mounted) return;
+    setState(() => _color = selected);
   }
 
   void _showMessage(String message) =>
@@ -324,4 +407,20 @@ String _formatDuration(Duration duration) {
   final minutes = totalMinutes % 60;
   if (hours == 0) return '$minutes min';
   return '$hours hr ${minutes.toString().padLeft(2, '0')} min';
+}
+
+class _NoColorCrossPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color(0xFFD32F2F)
+      ..strokeWidth = 2.6
+      ..strokeCap = StrokeCap.round;
+    canvas
+      ..drawLine(const Offset(0, 0), Offset(size.width, size.height), paint)
+      ..drawLine(Offset(size.width, 0), Offset(0, size.height), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _NoColorCrossPainter oldDelegate) => false;
 }

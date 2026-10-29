@@ -110,11 +110,31 @@ void main() {
 
     expect(restarted.themeMode, ThemeMode.dark);
   });
+
+  test('persists custom swatches and task notes', () async {
+    const color = Color(0xFF12ABCD);
+    await viewModel.addCustomColor(color);
+    await viewModel.addCustomColor(color);
+    await viewModel.startTask('Planning');
+    final task = viewModel.runningTasks.single;
+    await viewModel.updateTask(
+      task.copyWith(notes: 'First line\nSecond line'),
+      color: color,
+    );
+
+    final restarted = TaskViewModel(repository);
+    addTearDown(restarted.dispose);
+    await restarted.load();
+
+    expect(restarted.customColors, [color]);
+    expect(restarted.runningTasks.single.notes, 'First line\nSecond line');
+  });
 }
 
 class _MemoryTaskRepository implements TaskRepository {
   final List<Task> tasks = [];
   final Map<String, int> colors = {};
+  final List<int> customColors = [];
   String? themeMode;
 
   @override
@@ -128,6 +148,7 @@ class _MemoryTaskRepository implements TaskRepository {
       completedPage: _page(completed, pageSize),
       taskNames: await loadTaskNames(),
       colors: {...colors},
+      customColors: [...customColors],
     );
   }
 
@@ -168,6 +189,14 @@ class _MemoryTaskRepository implements TaskRepository {
 
   @override
   Future<void> saveThemeMode(String mode) async => themeMode = mode;
+
+  @override
+  Future<List<int>> loadCustomColors() async => [...customColors];
+
+  @override
+  Future<void> addCustomColor(int argb) async {
+    if (!customColors.contains(argb)) customColors.add(argb);
+  }
 
   @override
   Future<void> saveTask(

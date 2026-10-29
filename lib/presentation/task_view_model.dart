@@ -21,6 +21,7 @@ class TaskViewModel extends ChangeNotifier {
   List<Task> _completedTasks = [];
   List<String> _taskNames = [];
   Map<String, int> _colors = {};
+  List<int> _customColors = [];
   TaskCursor? _completedCursor;
   ThemeMode _themeMode = ThemeMode.system;
   bool _hasMoreCompleted = false;
@@ -33,6 +34,8 @@ class TaskViewModel extends ChangeNotifier {
   bool get hasMoreCompleted => _hasMoreCompleted;
   bool get isLoadingMore => _isLoadingMore;
   ThemeMode get themeMode => _themeMode;
+  List<Color> get customColors =>
+      _customColors.map((argb) => Color(argb)).toList(growable: false);
   DateTime get now => DateTime.now();
 
   List<String> suggestionsFor(String input) {
@@ -63,6 +66,7 @@ class TaskViewModel extends ChangeNotifier {
     _hasMoreCompleted = data.completedPage.hasMore;
     _taskNames = data.taskNames;
     _colors = data.colors;
+    _customColors = data.customColors;
     _themeMode = _themeModeFromName(savedThemeMode);
     _isLoaded = true;
     notifyListeners();
@@ -95,6 +99,17 @@ class TaskViewModel extends ChangeNotifier {
     _themeMode = mode;
     notifyListeners();
     await _repository.saveThemeMode(mode.name);
+  }
+
+  Future<void> addCustomColor(Color color) async {
+    final argb = color.toARGB32();
+    if (taskColors.any((swatch) => swatch.toARGB32() == argb) ||
+        _customColors.contains(argb)) {
+      return;
+    }
+    _customColors = [..._customColors, argb];
+    notifyListeners();
+    await _repository.addCustomColor(argb);
   }
 
   Future<void> startTask(String name) async {

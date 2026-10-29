@@ -24,12 +24,14 @@ class InitialTaskData {
     required this.completedPage,
     required this.taskNames,
     required this.colors,
+    required this.customColors,
   });
 
   final List<Task> runningTasks;
   final TaskPage completedPage;
   final List<String> taskNames;
   final Map<String, int> colors;
+  final List<int> customColors;
 }
 
 abstract interface class TaskRepository {
@@ -41,6 +43,8 @@ abstract interface class TaskRepository {
   Future<List<String>> loadTaskNames();
   Future<String?> loadThemeMode();
   Future<void> saveThemeMode(String mode);
+  Future<List<int>> loadCustomColors();
+  Future<void> addCustomColor(int argb);
   Future<void> saveTask(
     Task task, {
     String? colorKey,
@@ -69,14 +73,15 @@ class SqliteTaskRepository implements TaskRepository {
     return _databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 3,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE tasks (
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
               started_at TEXT NOT NULL,
-              ended_at TEXT
+              ended_at TEXT,
+              notes TEXT NOT NULL DEFAULT ''
             )
           ''');
           await db.execute(
@@ -93,11 +98,18 @@ class SqliteTaskRepository implements TaskRepository {
             )
           ''');
           await _createSettingsTable(db);
+          await _createCustomColorsTable(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
             await _createPaginationIndexes(db);
             await _createSettingsTable(db);
+          }
+          if (oldVersion < 3) {
+            await db.execute(
+              "ALTER TABLE tasks ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
+            );
+            await _createCustomColorsTable(db);
           }
         },
       ),
@@ -124,6 +136,15 @@ class SqliteTaskRepository implements TaskRepository {
     ''');
   }
 
+  static Future<void> _createCustomColorsTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS custom_colors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        argb INTEGER NOT NULL UNIQUE
+      )
+    ''');
+  }
+
   static Future<String> _defaultDatabasePath() async {
     final directory = await getDatabasesPath();
     return paths.join(directory, _databaseName);
@@ -141,11 +162,13 @@ class SqliteTaskRepository implements TaskRepository {
       loadCompletedPage(pageSize: pageSize),
       db.query('task_colors'),
       loadTaskNames(),
+      loadCustomColors(),
     ]);
     final runningRows = results[0] as List<Map<String, Object?>>;
     final completedPage = results[1] as TaskPage;
     final colorRows = results[2] as List<Map<String, Object?>>;
     final taskNames = results[3] as List<String>;
+    final customColors = results[4] as List<int>;
     final runningTasks = runningRows.map(_taskFromRow).toList();
     final colors = {
       for (final row in colorRows)
@@ -156,6 +179,7 @@ class SqliteTaskRepository implements TaskRepository {
       completedPage: completedPage,
       taskNames: taskNames,
       colors: colors,
+      customColors: customColors,
     );
   }
 
@@ -230,6 +254,25 @@ class SqliteTaskRepository implements TaskRepository {
   }
 
   @override
+  Future<List<int>> loadCustomColors() async {
+    final db = await _db;
+    final rows = await db.query(
+      'custom_colors',
+      columns: ['argb'],
+      orderBy: 'id ASC',
+    );
+    return rows.map((row) => row['argb']! as int).toList();
+  }
+
+  @override
+  Future<void> addCustomColor(int argb) async {
+    final db = await _db;
+    await db.insert('custom_colors', {
+      'argb': argb,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  @override
   Future<void> saveTask(
     Task task, {
     String? colorKey,
@@ -243,6 +286,7 @@ class SqliteTaskRepository implements TaskRepository {
         'name': task.name,
         'started_at': task.startedAt.toIso8601String(),
         'ended_at': task.endedAt?.toIso8601String(),
+        'notes': task.notes,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
       if (colorKey != null && colorValue != null) {
         await transaction.insert('task_colors', {
@@ -280,5 +324,6 @@ class SqliteTaskRepository implements TaskRepository {
     endedAt: row['ended_at'] == null
         ? null
         : DateTime.parse(row['ended_at']! as String),
+    notes: row['notes'] as String? ?? '',
   );
 }

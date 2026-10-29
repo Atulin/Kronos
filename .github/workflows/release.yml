@@ -88,7 +88,7 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           set -euo pipefail
@@ -116,6 +116,10 @@ jobs:
             exit 1
           fi
 
+          certificate_sha256="$(keytool -exportcert -alias "$key_alias" \
+            -keystore "$keystore" -storepass "$KEYSTORE_PASSWORD" | sha256sum | awk '{print toupper($1)}')"
+          echo "EXPECTED_RELEASE_CERT_SHA256=$certificate_sha256" >> "$GITHUB_ENV"
+
           {
             echo "storeFile=flutter-release.jks"
             echo "storePassword=$KEYSTORE_PASSWORD"
@@ -137,10 +141,23 @@ jobs:
         run: |
           apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -n1 || true)"
           if [ -z "$apksigner" ]; then
-            echo "::warning::apksigner not found; skipping the APK signature check."
-            exit 0
+            echo "::error::apksigner not found; cannot verify the release APK signature."
+            exit 1
           fi
-          "$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk
+          signing_info="$("$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk)"
+          printf '%s\n' "$signing_info"
+          actual_certificate_sha256="$(sed -nE \
+            's/.*certificate SHA-256 digest: ([[:xdigit:]:]+).*/\1/p' <<< "$signing_info" | \
+            head -n1 | tr -d ':' | tr '[:lower:]' '[:upper:]')"
+          if [ -z "$actual_certificate_sha256" ]; then
+            echo "::error::Could not read the APK signer certificate fingerprint."
+            exit 1
+          fi
+          if [ "$actual_certificate_sha256" != "$EXPECTED_RELEASE_CERT_SHA256" ]; then
+            echo "::error title=Unexpected APK certificate::The APK is not signed with the configured release keystore."
+            exit 1
+          fi
+          echo "APK signer matches the configured release keystore."
 
       - name: Remove signing material
         if: always()

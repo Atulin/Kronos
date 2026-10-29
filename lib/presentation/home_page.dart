@@ -250,7 +250,6 @@ class _RunningTaskTile extends StatelessWidget {
     onLongPress: onDelete,
     child: _TaskCard(
       color: color,
-      showBorder: true,
       onTap: onTap,
       child: Row(
         children: [
@@ -327,27 +326,17 @@ class _TaskCard extends StatelessWidget {
     required this.color,
     required this.onTap,
     required this.child,
-    this.showBorder = false,
   });
   final Color? color;
   final VoidCallback onTap;
   final Widget child;
-  final bool showBorder;
 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
     child: Material(
       color: Theme.of(context).colorScheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(15),
-        side: showBorder
-            ? BorderSide(
-                color: Theme.of(context).colorScheme.outlineVariant,
-                width: 0.8,
-              )
-            : BorderSide.none,
-      ),
+      borderRadius: BorderRadius.circular(15),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
@@ -442,13 +431,29 @@ class _AddTaskPanel extends StatelessWidget {
                   itemCount: runningTasks.length,
                   itemBuilder: (context, index) {
                     final task = runningTasks[index];
-                    return _RunningTaskTile(
-                      task: task,
-                      color: colorFor(task.name),
-                      now: now,
-                      onStop: () => onStop(task),
-                      onTap: () => onOpen(task),
-                      onDelete: () => onDelete(task),
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _RunningTaskTile(
+                          task: task,
+                          color: colorFor(task.name),
+                          now: now,
+                          onStop: () => onStop(task),
+                          onTap: () => onOpen(task),
+                          onDelete: () => onDelete(task),
+                        ),
+                        if (index < runningTasks.length - 1)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20),
+                            child: Divider(
+                              height: 1,
+                              thickness: 1,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outlineVariant,
+                            ),
+                          ),
+                      ],
                     );
                   },
                 ),

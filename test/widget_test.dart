@@ -69,7 +69,59 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('No color'), findsOneWidget);
-    expect(find.byIcon(Icons.close_rounded), findsOneWidget);
+    expect(find.byKey(const Key('no-color-cross')), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.byKey(const Key('no-color-cross')),
+        matching: find.byType(ClipOval),
+      ),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('separates running tasks with a divider but no heading', (
+    tester,
+  ) async {
+    final repository = _MemoryTaskRepository();
+    final viewModel = TaskViewModel(repository);
+    await viewModel.startTask('Planning');
+    await viewModel.startTask('Review');
+    await tester.pumpWidget(KronosApp(viewModel: viewModel));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('IN PROGRESS'), findsNothing);
+    expect(find.byType(Divider), findsOneWidget);
+    final divider = tester.widget<Divider>(find.byType(Divider));
+    expect(divider.height, 1);
+    expect(divider.thickness, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('saves multiline notes from task details', (tester) async {
+    final repository = _MemoryTaskRepository();
+    final viewModel = TaskViewModel(repository);
+    await viewModel.startTask('Planning');
+    await tester.pumpWidget(KronosApp(viewModel: viewModel));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.text('Planning'));
+    await tester.pumpAndSettle();
+    expect(find.text('Task details'), findsOneWidget);
+    await tester.drag(find.byType(ListView).last, const Offset(0, -700));
+    await tester.pumpAndSettle();
+    expect(find.text('NOTES'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('task-notes')),
+      'First line\nSecond line',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(viewModel.runningTasks.single.notes, 'First line\nSecond line');
+    expect(repository._tasks.single.notes, 'First line\nSecond line');
     await tester.pumpWidget(const SizedBox());
   });
 }
@@ -77,6 +129,7 @@ void main() {
 class _MemoryTaskRepository implements TaskRepository {
   final List<Task> _tasks = [];
   final Map<String, int> _colors = {};
+  final List<int> _customColors = [];
   String? themeMode;
 
   @override
@@ -93,6 +146,7 @@ class _MemoryTaskRepository implements TaskRepository {
       completedPage: _page(completed, pageSize),
       taskNames: await loadTaskNames(),
       colors: {..._colors},
+      customColors: [..._customColors],
     );
   }
 
@@ -138,6 +192,14 @@ class _MemoryTaskRepository implements TaskRepository {
 
   @override
   Future<void> saveThemeMode(String mode) async => themeMode = mode;
+
+  @override
+  Future<List<int>> loadCustomColors() async => [..._customColors];
+
+  @override
+  Future<void> addCustomColor(int argb) async {
+    if (!_customColors.contains(argb)) _customColors.add(argb);
+  }
 
   @override
   Future<void> saveTask(
