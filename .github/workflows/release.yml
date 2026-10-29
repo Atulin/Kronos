@@ -7,183 +7,177 @@ name: Release
 # or run this workflow manually with an existing tag name.
 
 on:
-    push:
-        tags:
-            - "v*"
-    workflow_dispatch:
-        inputs:
-            tag:
-                description: "Release tag, e.g. v0.1.0 (created from the selected ref if missing)"
-                required: true
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.1.0 (created from the selected ref if missing)"
+        required: true
 
 permissions:
-    contents: write
+  contents: write
 
 concurrency:
-    group: release-${{ github.event.inputs.tag || github.ref_name }}
-    cancel-in-progress: false
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 env:
-    FLUTTER_VERSION: "3.47.8"
-    RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  FLUTTER_VERSION: "3.47.8"
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-    verify:
-        name: Analyze and test
-        runs-on: ubuntu-latest
-        timeout-minutes: 20
-        steps:
-            - uses: actions/checkout@v7
+  verify:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
 
-            - uses: subosito/flutter-action@v2
-              with:
-                  flutter-version: ${{ env.FLUTTER_VERSION }}
-                  channel: stable
-                  cache: true
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
 
-            - name: Install dependencies
-              run: flutter pub get
+      - name: Install dependencies
+        run: flutter pub get
 
-            - run: flutter analyze
+      - run: flutter analyze
 
-            - run: flutter test
+      - run: flutter test
 
-            - name: Check that pubspec.yaml matches the release tag
-              run: |
-                  pubspec_version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1 | sed 's/+.*//')"
-                  tag_version="${RELEASE_TAG#v}"
-                  if [ "$pubspec_version" != "$tag_version" ]; then
-                    echo "::warning title=Version mismatch::pubspec.yaml declares ${pubspec_version} but the release tag is ${RELEASE_TAG}."
-                  fi
+      - name: Check that pubspec.yaml matches the release tag
+        run: |
+          pubspec_version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1 | sed 's/+.*//')"
+          tag_version="${RELEASE_TAG#v}"
+          if [ "$pubspec_version" != "$tag_version" ]; then
+            echo "::warning title=Version mismatch::pubspec.yaml declares ${pubspec_version} but the release tag is ${RELEASE_TAG}."
+          fi
 
-    android:
-        name: Android APK
-        needs: verify
-        runs-on: ubuntu-latest
-        timeout-minutes: 45
-        steps:
-            - uses: actions/checkout@v7
+  android:
+    name: Android APK
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
 
-            - uses: actions/setup-java@v6
-              with:
-                  distribution: temurin
-                  java-version: "17"
-                  cache: gradle
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
 
-            - uses: subosito/flutter-action@v2
-              with:
-                  flutter-version: ${{ env.FLUTTER_VERSION }}
-                  channel: stable
-                  cache: true
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
 
-            - name: Install dependencies
-              run: flutter pub get
+      - name: Install dependencies
+        run: flutter pub get
 
-            - name: Generate launcher icons
-              shell: bash
-              run: |
-                  dart run flutter_launcher_icons
-                  # flutter_launcher_icons 0.14.4 rewrites every ASSETCATALOG* build
-                  # setting of the Runner target, which turns this boolean into the
-                  # icon name. Restore it so an iOS build from this checkout still works.
-                  sed -i \
-                    's/ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = AppIcon;/ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;/' \
-                    ios/Runner.xcodeproj/project.pbxproj
+      - name: Generate launcher icons
+        shell: bash
+        run: |
+          dart run flutter_launcher_icons
 
-            - name: Restore release keystore
-              env:
-                  KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-                  KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-                  KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-                  KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-              run: |
-                  set -euo pipefail
+      - name: Restore release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
 
-                  if [ -z "${KEYSTORE_BASE64:-}" ]; then
-                    echo "::error title=Missing secret::ANDROID_KEYSTORE_BASE64 is not set."
-                    exit 1
-                  fi
-                  if [ -z "${KEYSTORE_PASSWORD:-}" ]; then
-                    echo "::error title=Missing secret::ANDROID_KEYSTORE_PASSWORD is not set."
-                    exit 1
-                  fi
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::error title=Missing secret::ANDROID_KEYSTORE_BASE64 is not set."
+            exit 1
+          fi
+          if [ -z "${KEYSTORE_PASSWORD:-}" ]; then
+            echo "::error title=Missing secret::ANDROID_KEYSTORE_PASSWORD is not set."
+            exit 1
+          fi
 
-                  keystore=android/app/flutter-release.jks
-                  printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > "$keystore"
+          keystore=android/app/flutter-release.jks
+          printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > "$keystore"
 
-                  # Read the alias and keystore type from the file itself; this also
-                  # validates that the password and the decoded bytes are correct.
-                  info="$(keytool -list -v -keystore "$keystore" -storepass "$KEYSTORE_PASSWORD")"
-                  store_type="$(sed -n 's/^Keystore type: //p' <<< "$info" | head -n1)"
-                  key_alias="${KEY_ALIAS:-$(sed -n 's/^Alias name: //p' <<< "$info" | head -n1)}"
+          # Read the alias and keystore type from the file itself; this also
+          # validates that the password and the decoded bytes are correct.
+          info="$(keytool -list -v -keystore "$keystore" -storepass "$KEYSTORE_PASSWORD")"
+          store_type="$(sed -n 's/^Keystore type: //p' <<< "$info" | head -n1)"
+          key_alias="${KEY_ALIAS:-$(sed -n 's/^Alias name: //p' <<< "$info" | head -n1)}"
 
-                  if [ -z "$key_alias" ]; then
-                    echo "::error::Could not determine the key alias; set the ANDROID_KEY_ALIAS secret."
-                    exit 1
-                  fi
+          if [ -z "$key_alias" ]; then
+            echo "::error::Could not determine the key alias; set the ANDROID_KEY_ALIAS secret."
+            exit 1
+          fi
 
-                  {
-                    echo "storeFile=flutter-release.jks"
-                    echo "storePassword=$KEYSTORE_PASSWORD"
-                    echo "keyAlias=$key_alias"
-                    echo "keyPassword=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
-                    if [ -n "$store_type" ]; then
-                      echo "storeType=$store_type"
-                    fi
-                  } > android/key.properties
+          {
+            echo "storeFile=flutter-release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$key_alias"
+            echo "keyPassword=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+            if [ -n "$store_type" ]; then
+              echo "storeType=$store_type"
+            fi
+          } > android/key.properties
 
-                  echo "Signing with alias '$key_alias' (keystore type: ${store_type:-auto})."
+          echo "Signing with alias '$key_alias' (keystore type: ${store_type:-auto})."
 
-            - name: Build universal APK
-              env:
-                  REQUIRE_RELEASE_SIGNING: "true"
-              run: flutter build apk --release --build-number "${{ github.run_number }}"
+      - name: Build universal APK
+        env:
+          REQUIRE_RELEASE_SIGNING: "true"
+        run: flutter build apk --release --build-number "${{ github.run_number }}"
 
-            - name: Verify APK signing certificate
-              run: |
-                  apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -n1 || true)"
-                  if [ -z "$apksigner" ]; then
-                    echo "::warning::apksigner not found; skipping the APK signature check."
-                    exit 0
-                  fi
-                  "$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk
+      - name: Verify APK signing certificate
+        run: |
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | tail -n1 || true)"
+          if [ -z "$apksigner" ]; then
+            echo "::warning::apksigner not found; skipping the APK signature check."
+            exit 0
+          fi
+          "$apksigner" verify --print-certs build/app/outputs/flutter-apk/app-release.apk
 
-            - name: Remove signing material
-              if: always()
-              run: rm -f android/key.properties android/app/flutter-release.jks
+      - name: Remove signing material
+        if: always()
+        run: rm -f android/key.properties android/app/flutter-release.jks
 
-            - name: Stage artifact
-              run: |
-                  mkdir -p dist
-                  cp build/app/outputs/flutter-apk/app-release.apk \
-                    "dist/KemoShow-${RELEASE_TAG}-android.apk"
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "dist/KemoShow-${RELEASE_TAG}-android.apk"
 
-            - uses: actions/upload-artifact@v7
-              with:
-                  name: android-apk
-                  path: dist/KemoShow-*-android.apk
-                  if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk
+          path: dist/KemoShow-*-android.apk
+          if-no-files-found: error
 
-    release:
-        name: Publish release
-        needs: [android]
-        runs-on: ubuntu-latest
-        timeout-minutes: 10
-        steps:
-            - uses: actions/download-artifact@v8
-              with:
-                  path: dist
-                  merge-multiple: true
+  release:
+    name: Publish release
+    needs: [android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
 
-            - name: List assets
-              run: ls -lh dist
+      - name: List assets
+        run: ls -lh dist
 
-            - uses: softprops/action-gh-release@v3
-              with:
-                  tag_name: ${{ env.RELEASE_TAG }}
-                  name: KemoShow ${{ env.RELEASE_TAG }}
-                  target_commitish: ${{ github.sha }}
-                  prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
-                  generate_release_notes: true
-                  fail_on_unmatched_files: true
-                  files: dist/*
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: KemoShow ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*
