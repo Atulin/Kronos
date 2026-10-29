@@ -121,6 +121,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ListWheelScrollView), findsNWidgets(3));
+    final firstWheelText = tester.widget<Text>(
+      find
+          .descendant(
+            of: find.byType(ListWheelScrollView).first,
+            matching: find.byType(Text),
+          )
+          .first,
+    );
+    expect(firstWheelText.style?.fontSize, 28);
     expect(find.text('Cancel'), findsOneWidget);
     expect(find.text('Done'), findsOneWidget);
     await tester.tap(find.text('Done'));
@@ -154,25 +163,42 @@ void main() {
       final viewModel = TaskViewModel(repository);
       await viewModel.startTask('Planning');
       await viewModel.startTask('Review');
+      await viewModel.startTask('Foobar');
       await tester.pumpWidget(KronosApp(viewModel: viewModel));
       await tester.pump();
       await tester.pump();
 
       final runningTaskStop = find.byTooltip('Stop Planning');
       final topBeforeSuggestions = tester.getTopLeft(runningTaskStop).dy;
-      await tester.enterText(find.byType(TextField), 'Plan');
+      final input = find.byType(TextField);
+      await tester.enterText(input, 'f');
       await tester.pump();
       await tester.pump();
 
       expect(find.byIcon(Icons.history_rounded), findsOneWidget);
-      expect(find.text('Planning'), findsNWidgets(2));
+      expect(find.text('Foobar'), findsNWidgets(2));
       expect(tester.getTopLeft(runningTaskStop).dy, topBeforeSuggestions);
       final suggestionTop = tester
           .getTopLeft(find.byIcon(Icons.history_rounded))
           .dy;
-      final inputTop = tester.getTopLeft(find.byType(TextField)).dy;
+      final inputTop = tester.getTopLeft(input).dy;
       expect(suggestionTop, greaterThanOrEqualTo(0));
       expect(suggestionTop, lessThan(inputTop));
+
+      await tester.enterText(input, 'fo');
+      await tester.pump();
+      await tester.pump();
+      expect(find.widgetWithText(ListTile, 'Foobar'), findsOneWidget);
+      expect(tester.getTopLeft(runningTaskStop).dy, topBeforeSuggestions);
+
+      await tester.tap(find.widgetWithText(ListTile, 'Foobar'));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        viewModel.runningTasks.where((task) => task.name == 'Foobar'),
+        hasLength(2),
+      );
+      expect(tester.widget<TextField>(input).controller!.text, isEmpty);
       await tester.pumpWidget(const SizedBox());
     },
   );

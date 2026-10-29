@@ -102,7 +102,7 @@ class _DateTimeWheelPickerState extends State<DateTimeWheelPicker> {
                     textTheme: CupertinoTextThemeData(
                       dateTimePickerTextStyle: TextStyle(
                         color: colors.onSurface,
-                        fontSize: 32,
+                        fontSize: 28,
                         height: 1,
                       ),
                     ),

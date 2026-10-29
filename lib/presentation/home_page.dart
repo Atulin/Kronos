@@ -574,11 +574,13 @@ class _SuggestionTextField extends StatefulWidget {
 class _SuggestionTextFieldState extends State<_SuggestionTextField> {
   final _portalController = OverlayPortalController();
   final _layerLink = LayerLink();
+  late final ValueNotifier<List<String>> _suggestions;
   bool _portalVisible = false;
 
   @override
   void initState() {
     super.initState();
+    _suggestions = ValueNotifier(widget.suggestions);
     widget.focusNode.addListener(_syncPortalVisibility);
   }
 
@@ -589,6 +591,9 @@ class _SuggestionTextFieldState extends State<_SuggestionTextField> {
     if (focusNodeChanged) {
       oldWidget.focusNode.removeListener(_syncPortalVisibility);
       widget.focusNode.addListener(_syncPortalVisibility);
+    }
+    if (!_sameSuggestions(oldWidget.suggestions, widget.suggestions)) {
+      _suggestions.value = widget.suggestions;
     }
     final suggestionsBecameAvailable =
         oldWidget.suggestions.isEmpty != widget.suggestions.isEmpty;
@@ -602,6 +607,7 @@ class _SuggestionTextFieldState extends State<_SuggestionTextField> {
   @override
   void dispose() {
     widget.focusNode.removeListener(_syncPortalVisibility);
+    _suggestions.dispose();
     super.dispose();
   }
 
@@ -620,43 +626,55 @@ class _SuggestionTextFieldState extends State<_SuggestionTextField> {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final overlayHeight = (widget.suggestions.length * 48)
-          .clamp(48, 160)
-          .toDouble();
       return OverlayPortal(
         controller: _portalController,
-        overlayChildBuilder: (overlayContext) => Positioned(
-          top: 0,
-          left: 0,
-          child: SizedBox(
-            width: constraints.maxWidth,
-            height: overlayHeight,
-            child: CompositedTransformFollower(
-              link: _layerLink,
-              targetAnchor: Alignment.topLeft,
-              followerAnchor: Alignment.bottomLeft,
-              offset: const Offset(0, -8),
-              showWhenUnlinked: false,
-              child: TextFieldTapRegion(
-                child: Material(
-                  color: Theme.of(overlayContext).colorScheme.surface,
-                  elevation: 12,
-                  borderRadius: BorderRadius.circular(14),
-                  clipBehavior: Clip.antiAlias,
-                  child: ListView.builder(
-                    itemExtent: 48,
-                    itemCount: widget.suggestions.length,
-                    itemBuilder: (context, index) => ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.history_rounded, size: 20),
-                      title: Text(widget.suggestions[index]),
-                      onTap: () =>
-                          widget.onSuggestion(widget.suggestions[index]),
-                    ),
-                  ),
+        overlayChildBuilder: (overlayContext) => Positioned.fill(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              CompositedTransformFollower(
+                link: _layerLink,
+                targetAnchor: Alignment.topLeft,
+                followerAnchor: Alignment.bottomLeft,
+                offset: const Offset(0, -8),
+                showWhenUnlinked: false,
+                child: ValueListenableBuilder<List<String>>(
+                  valueListenable: _suggestions,
+                  builder: (context, suggestions, _) {
+                    if (suggestions.isEmpty) return const SizedBox.shrink();
+                    final overlayHeight = (suggestions.length * 48)
+                        .clamp(48, 160)
+                        .toDouble();
+                    return SizedBox(
+                      width: constraints.maxWidth,
+                      height: overlayHeight,
+                      child: TextFieldTapRegion(
+                        child: Material(
+                          color: Theme.of(context).colorScheme.surface,
+                          elevation: 12,
+                          borderRadius: BorderRadius.circular(14),
+                          clipBehavior: Clip.antiAlias,
+                          child: ListView.builder(
+                            itemExtent: 48,
+                            itemCount: suggestions.length,
+                            itemBuilder: (context, index) => ListTile(
+                              dense: true,
+                              leading: const Icon(
+                                Icons.history_rounded,
+                                size: 20,
+                              ),
+                              title: Text(suggestions[index]),
+                              onTap: () =>
+                                  widget.onSuggestion(suggestions[index]),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
-            ),
+            ],
           ),
         ),
         child: CompositedTransformTarget(
@@ -683,6 +701,15 @@ class _SuggestionTextFieldState extends State<_SuggestionTextField> {
       );
     },
   );
+
+  bool _sameSuggestions(List<String> first, List<String> second) {
+    if (identical(first, second)) return true;
+    if (first.length != second.length) return false;
+    for (var index = 0; index < first.length; index++) {
+      if (first[index] != second[index]) return false;
+    }
+    return true;
+  }
 }
 
 String _dateLabel(DateTime day) {
