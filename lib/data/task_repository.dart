@@ -2,6 +2,8 @@ import 'package:path/path.dart' as paths;
 import 'package:sqflite/sqflite.dart';
 
 import '../domain/task.dart';
+import '../domain/task_backup.dart';
+import '../domain/task_filter.dart';
 
 class TaskCursor {
   const TaskCursor({required this.startedAt, required this.id});
@@ -35,16 +37,25 @@ class InitialTaskData {
 }
 
 abstract interface class TaskRepository {
-  Future<InitialTaskData> loadInitial({required int pageSize});
+  Future<InitialTaskData> loadInitial({
+    required int pageSize,
+    TaskFilter filter = const TaskFilter(),
+  });
   Future<TaskPage> loadCompletedPage({
     required int pageSize,
+    TaskFilter filter = const TaskFilter(),
     TaskCursor? before,
   });
   Future<List<String>> loadTaskNames();
   Future<String?> loadThemeMode();
   Future<void> saveThemeMode(String mode);
+  Future<String?> loadSetting(String key);
+  Future<void> saveSetting(String key, String value);
+  Future<void> deleteSetting(String key);
   Future<List<int>> loadCustomColors();
   Future<void> addCustomColor(int argb);
+  Future<TaskBackup> exportBackup();
+  Future<void> restoreBackup(TaskBackup backup);
   Future<void> saveTask(
     Task task, {
     String? colorKey,
@@ -151,7 +162,10 @@ class SqliteTaskRepository implements TaskRepository {
   }
 
   @override
-  Future<InitialTaskData> loadInitial({required int pageSize}) async {
+  Future<InitialTaskData> loadInitial({
+    required int pageSize,
+    TaskFilter filter = const TaskFilter(),
+  }) async {
     final db = await _db;
     final results = await Future.wait([
       db.query(
@@ -159,7 +173,7 @@ class SqliteTaskRepository implements TaskRepository {
         where: 'ended_at IS NULL',
         orderBy: 'started_at ASC, id ASC',
       ),
-      loadCompletedPage(pageSize: pageSize),
+      loadCompletedPage(pageSize: pageSize, filter: filter),
       db.query('task_colors'),
       loadTaskNames(),
       loadCustomColors(),
@@ -186,23 +200,35 @@ class SqliteTaskRepository implements TaskRepository {
   @override
   Future<TaskPage> loadCompletedPage({
     required int pageSize,
+    TaskFilter filter = const TaskFilter(),
     TaskCursor? before,
   }) async {
     final db = await _db;
-    final where = before == null
-        ? 'ended_at IS NOT NULL'
-        : 'ended_at IS NOT NULL AND '
-              '(started_at < ? OR (started_at = ? AND id < ?))';
-    final whereArgs = before == null
-        ? null
-        : [
-            before.startedAt.toIso8601String(),
-            before.startedAt.toIso8601String(),
-            before.id,
-          ];
+    final conditions = <String>['ended_at IS NOT NULL'];
+    final whereArgs = <Object?>[];
+    final query = filter.query.trim();
+    if (query.isNotEmpty) {
+      conditions.add('instr(lower(name), lower(?)) > 0');
+      whereArgs.add(query);
+    }
+    if (filter.startedAfter case final startedAfter?) {
+      conditions.add('started_at >= ?');
+      whereArgs.add(startedAfter.toIso8601String());
+    }
+    if (filter.startedBefore case final startedBefore?) {
+      conditions.add('started_at <= ?');
+      whereArgs.add(startedBefore.toIso8601String());
+    }
+    if (before case final cursor?) {
+      conditions.add('(started_at < ? OR (started_at = ? AND id < ?))');
+      whereArgs
+        ..add(cursor.startedAt.toIso8601String())
+        ..add(cursor.startedAt.toIso8601String())
+        ..add(cursor.id);
+    }
     final rows = await db.query(
       'tasks',
-      where: where,
+      where: conditions.join(' AND '),
       whereArgs: whereArgs,
       orderBy: 'started_at DESC, id DESC',
       limit: pageSize + 1,
@@ -233,12 +259,17 @@ class SqliteTaskRepository implements TaskRepository {
 
   @override
   Future<String?> loadThemeMode() async {
+    return loadSetting('theme_mode');
+  }
+
+  @override
+  Future<String?> loadSetting(String key) async {
     final db = await _db;
     final rows = await db.query(
       'app_settings',
       columns: ['value'],
       where: 'key = ?',
-      whereArgs: ['theme_mode'],
+      whereArgs: [key],
       limit: 1,
     );
     return rows.isEmpty ? null : rows.single['value']! as String;
@@ -246,11 +277,22 @@ class SqliteTaskRepository implements TaskRepository {
 
   @override
   Future<void> saveThemeMode(String mode) async {
+    await saveSetting('theme_mode', mode);
+  }
+
+  @override
+  Future<void> saveSetting(String key, String value) async {
     final db = await _db;
     await db.insert('app_settings', {
-      'key': 'theme_mode',
-      'value': mode,
+      'key': key,
+      'value': value,
     }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  @override
+  Future<void> deleteSetting(String key) async {
+    final db = await _db;
+    await db.delete('app_settings', where: 'key = ?', whereArgs: [key]);
   }
 
   @override
@@ -270,6 +312,65 @@ class SqliteTaskRepository implements TaskRepository {
     await db.insert('custom_colors', {
       'argb': argb,
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  @override
+  Future<TaskBackup> exportBackup() async {
+    final db = await _db;
+    return db.transaction((transaction) async {
+      final taskRows = await transaction.query(
+        'tasks',
+        orderBy: 'started_at ASC, id ASC',
+      );
+      final colorRows = await transaction.query('task_colors');
+      final customColorRows = await transaction.query(
+        'custom_colors',
+        columns: ['argb'],
+        orderBy: 'id ASC',
+      );
+      return TaskBackup(
+        exportedAt: DateTime.now().toUtc(),
+        tasks: taskRows.map(_taskFromRow).toList(),
+        colors: {
+          for (final row in colorRows)
+            row['name_key']! as String: row['argb']! as int,
+        },
+        customColors: customColorRows
+            .map((row) => row['argb']! as int)
+            .toList(),
+      );
+    });
+  }
+
+  @override
+  Future<void> restoreBackup(TaskBackup backup) async {
+    final db = await _db;
+    await db.transaction((transaction) async {
+      await transaction.delete('tasks');
+      await transaction.delete('task_colors');
+      await transaction.delete('custom_colors');
+
+      final batch = transaction.batch();
+      for (final task in backup.tasks) {
+        batch.insert('tasks', {
+          'id': task.id,
+          'name': task.name,
+          'started_at': task.startedAt.toIso8601String(),
+          'ended_at': task.endedAt?.toIso8601String(),
+          'notes': task.notes,
+        });
+      }
+      for (final entry in backup.colors.entries) {
+        batch.insert('task_colors', {
+          'name_key': entry.key,
+          'argb': entry.value,
+        });
+      }
+      for (final color in backup.customColors) {
+        batch.insert('custom_colors', {'argb': color});
+      }
+      await batch.commit(noResult: true);
+    });
   }
 
   @override

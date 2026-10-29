@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../data/task_repository.dart';
 import '../domain/task.dart';
+import '../domain/task_filter.dart';
 
 class TaskViewModel extends ChangeNotifier {
   TaskViewModel(this._repository) {
@@ -23,16 +24,21 @@ class TaskViewModel extends ChangeNotifier {
   Map<String, int> _colors = {};
   List<int> _customColors = [];
   TaskCursor? _completedCursor;
+  TaskFilter _filter = const TaskFilter();
   ThemeMode _themeMode = ThemeMode.system;
   bool _hasMoreCompleted = false;
   bool _isLoadingMore = false;
+  bool _isFiltering = false;
   bool _isLoaded = false;
+  int _filterGeneration = 0;
 
   List<Task> get runningTasks => List.unmodifiable(_runningTasks);
   List<Task> get completedTasks => List.unmodifiable(_completedTasks);
   bool get isLoaded => _isLoaded;
   bool get hasMoreCompleted => _hasMoreCompleted;
   bool get isLoadingMore => _isLoadingMore;
+  bool get isFiltering => _isFiltering;
+  TaskFilter get filter => _filter;
   ThemeMode get themeMode => _themeMode;
   List<Color> get customColors =>
       _customColors.map((argb) => Color(argb)).toList(growable: false);
@@ -58,7 +64,10 @@ class TaskViewModel extends ChangeNotifier {
   }
 
   Future<void> load() async {
-    final data = await _repository.loadInitial(pageSize: pageSize);
+    final data = await _repository.loadInitial(
+      pageSize: pageSize,
+      filter: _filter,
+    );
     final savedThemeMode = await _repository.loadThemeMode();
     _runningTasks = data.runningTasks;
     _completedTasks = data.completedPage.tasks;
@@ -75,12 +84,15 @@ class TaskViewModel extends ChangeNotifier {
   Future<void> loadMoreCompleted() async {
     if (!_isLoaded || !_hasMoreCompleted || _isLoadingMore) return;
     _isLoadingMore = true;
+    final generation = _filterGeneration;
     notifyListeners();
     try {
       final page = await _repository.loadCompletedPage(
         pageSize: pageSize,
+        filter: _filter,
         before: _completedCursor,
       );
+      if (generation != _filterGeneration) return;
       final loadedIds = _completedTasks.map((task) => task.id).toSet();
       _completedTasks = [
         ..._completedTasks,
@@ -89,8 +101,44 @@ class TaskViewModel extends ChangeNotifier {
       _completedCursor = page.nextCursor;
       _hasMoreCompleted = page.hasMore;
     } finally {
-      _isLoadingMore = false;
-      notifyListeners();
+      if (generation == _filterGeneration) {
+        _isLoadingMore = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> applyFilter(TaskFilter filter) async {
+    if (filter.startedAfter != null &&
+        filter.startedBefore != null &&
+        filter.startedAfter!.isAfter(filter.startedBefore!)) {
+      return;
+    }
+    if (filter == _filter) return;
+
+    _filter = filter;
+    final generation = ++_filterGeneration;
+    _completedTasks = [];
+    _completedCursor = null;
+    _hasMoreCompleted = false;
+    _isLoadingMore = false;
+    _isFiltering = true;
+    notifyListeners();
+
+    try {
+      final page = await _repository.loadCompletedPage(
+        pageSize: pageSize,
+        filter: filter,
+      );
+      if (generation != _filterGeneration) return;
+      _completedTasks = page.tasks;
+      _completedCursor = page.nextCursor;
+      _hasMoreCompleted = page.hasMore;
+    } finally {
+      if (generation == _filterGeneration) {
+        _isFiltering = false;
+        notifyListeners();
+      }
     }
   }
 

@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../data/backup_service.dart';
 import '../domain/task.dart';
+import '../domain/task_filter.dart';
+import 'search_filter_sheet.dart';
 import 'settings_page.dart';
 import 'task_details_page.dart';
 import 'task_view_model.dart';
@@ -12,10 +15,12 @@ class HomePage extends StatefulWidget {
     super.key,
     required this.viewModel,
     required this.onThemeModeChanged,
+    this.backupService,
   });
 
   final TaskViewModel viewModel;
   final ValueChanged<ThemeMode> onThemeModeChanged;
+  final BackupService? backupService;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -57,6 +62,18 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
         actions: [
+          ListenableBuilder(
+            listenable: widget.viewModel,
+            builder: (context, _) => IconButton(
+              tooltip: 'Search and filter',
+              onPressed: widget.viewModel.isLoaded ? _openSearch : null,
+              icon: Icon(
+                widget.viewModel.filter.isActive
+                    ? Icons.manage_search_rounded
+                    : Icons.search_rounded,
+              ),
+            ),
+          ),
           IconButton(
             tooltip: 'Settings',
             onPressed: () => Navigator.of(context).push(
@@ -64,6 +81,8 @@ class _HomePageState extends State<HomePage> {
                 builder: (_) => SettingsPage(
                   themeMode: widget.viewModel.themeMode,
                   onThemeModeChanged: widget.onThemeModeChanged,
+                  backupService: widget.backupService,
+                  onBackupImported: widget.viewModel.load,
                 ),
               ),
             ),
@@ -107,8 +126,17 @@ class _HomePageState extends State<HomePage> {
                       const SliverToBoxAdapter(
                         child: _SectionHeading(title: 'COMPLETED'),
                       ),
-                      if (completed.isEmpty)
-                        const SliverToBoxAdapter(child: _EmptyCompleted())
+                      if (widget.viewModel.isFiltering)
+                        const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (completed.isEmpty)
+                        SliverToBoxAdapter(
+                          child: _EmptyCompleted(
+                            filterActive: widget.viewModel.filter.isActive,
+                          ),
+                        )
                       else
                         for (final entry in grouped.entries) ...[
                           SliverToBoxAdapter(
@@ -179,6 +207,17 @@ class _HomePageState extends State<HomePage> {
             TaskDetailsPage(task: task, viewModel: widget.viewModel),
       ),
     );
+  }
+
+  Future<void> _openSearch() async {
+    final filter = await showModalBottomSheet<TaskFilter>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (_) => SearchFilterSheet(initialFilter: widget.viewModel.filter),
+    );
+    if (filter == null || !mounted) return;
+    await widget.viewModel.applyFilter(filter);
   }
 
   Future<void> _confirmDelete(BuildContext context, Task task) async {
@@ -357,7 +396,10 @@ class _TaskCard extends StatelessWidget {
 }
 
 class _EmptyCompleted extends StatelessWidget {
-  const _EmptyCompleted();
+  const _EmptyCompleted({required this.filterActive});
+
+  final bool filterActive;
+
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(24, 35, 24, 35),
@@ -370,7 +412,9 @@ class _EmptyCompleted extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         Text(
-          'No completed tasks yet',
+          filterActive
+              ? 'No completed tasks match these filters'
+              : 'No completed tasks yet',
           style: TextStyle(
             color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),

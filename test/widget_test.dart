@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kronos/data/backup_service.dart';
 import 'package:kronos/data/task_repository.dart';
 import 'package:kronos/domain/task.dart';
+import 'package:kronos/domain/task_backup.dart';
+import 'package:kronos/domain/task_filter.dart';
 import 'package:kronos/presentation/kronos_app.dart';
 import 'package:kronos/presentation/task_view_model.dart';
 
@@ -55,6 +58,27 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('settings display backup and restore controls', (tester) async {
+    final repository = _MemoryTaskRepository();
+    final viewModel = TaskViewModel(repository);
+    final backupService = BackupService(repository);
+    await tester.pumpWidget(
+      KronosApp(viewModel: viewModel, backupService: backupService),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Settings'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('DATA & BACKUP'), findsOneWidget);
+    expect(find.text('Automatic backups'), findsOneWidget);
+    expect(find.text('Weekly'), findsOneWidget);
+    expect(find.text('Export'), findsOneWidget);
+    expect(find.text('Import'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('task color picker defaults to the selectable no-color option', (
     tester,
   ) async {
@@ -99,6 +123,28 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('search filters completed tasks by name', (tester) async {
+    final repository = _MemoryTaskRepository();
+    final viewModel = TaskViewModel(repository);
+    await viewModel.startTask('Write report');
+    await viewModel.stopTask(viewModel.runningTasks.single);
+    await viewModel.startTask('Review notes');
+    await viewModel.stopTask(viewModel.runningTasks.single);
+    await tester.pumpWidget(KronosApp(viewModel: viewModel));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('Search and filter'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'WRITE');
+    await tester.tap(find.text('Apply'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Write report'), findsOneWidget);
+    expect(find.text('Review notes'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('saves multiline notes from task details', (tester) async {
     final repository = _MemoryTaskRepository();
     final viewModel = TaskViewModel(repository);
@@ -130,17 +176,24 @@ class _MemoryTaskRepository implements TaskRepository {
   final List<Task> _tasks = [];
   final Map<String, int> _colors = {};
   final List<int> _customColors = [];
+  final Map<String, String> _settings = {};
   String? themeMode;
 
   @override
-  Future<InitialTaskData> loadInitial({required int pageSize}) async {
+  Future<InitialTaskData> loadInitial({
+    required int pageSize,
+    TaskFilter filter = const TaskFilter(),
+  }) async {
     final running = _tasks.where((task) => task.isRunning).toList()
       ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
-    final completed = _tasks.where((task) => !task.isRunning).toList()
-      ..sort((a, b) {
-        final byDate = b.startedAt.compareTo(a.startedAt);
-        return byDate != 0 ? byDate : b.id.compareTo(a.id);
-      });
+    final completed =
+        _tasks
+            .where((task) => !task.isRunning && _matches(task, filter))
+            .toList()
+          ..sort((a, b) {
+            final byDate = b.startedAt.compareTo(a.startedAt);
+            return byDate != 0 ? byDate : b.id.compareTo(a.id);
+          });
     return InitialTaskData(
       runningTasks: running,
       completedPage: _page(completed, pageSize),
@@ -153,13 +206,17 @@ class _MemoryTaskRepository implements TaskRepository {
   @override
   Future<TaskPage> loadCompletedPage({
     required int pageSize,
+    TaskFilter filter = const TaskFilter(),
     TaskCursor? before,
   }) async {
-    final completed = _tasks.where((task) => !task.isRunning).toList()
-      ..sort((a, b) {
-        final byDate = b.startedAt.compareTo(a.startedAt);
-        return byDate != 0 ? byDate : b.id.compareTo(a.id);
-      });
+    final completed =
+        _tasks
+            .where((task) => !task.isRunning && _matches(task, filter))
+            .toList()
+          ..sort((a, b) {
+            final byDate = b.startedAt.compareTo(a.startedAt);
+            return byDate != 0 ? byDate : b.id.compareTo(a.id);
+          });
     final remaining = before == null
         ? completed
         : completed.where((task) {
@@ -168,6 +225,15 @@ class _MemoryTaskRepository implements TaskRepository {
                 (dateCompare == 0 && task.id.compareTo(before.id) < 0);
           }).toList();
     return _page(remaining, pageSize);
+  }
+
+  bool _matches(Task task, TaskFilter filter) {
+    final query = filter.query.trim().toLowerCase();
+    return (query.isEmpty || task.name.toLowerCase().contains(query)) &&
+        (filter.startedAfter == null ||
+            !task.startedAt.isBefore(filter.startedAfter!)) &&
+        (filter.startedBefore == null ||
+            !task.startedAt.isAfter(filter.startedBefore!));
   }
 
   TaskPage _page(List<Task> tasks, int pageSize) {
@@ -194,11 +260,43 @@ class _MemoryTaskRepository implements TaskRepository {
   Future<void> saveThemeMode(String mode) async => themeMode = mode;
 
   @override
+  Future<String?> loadSetting(String key) async => _settings[key];
+
+  @override
+  Future<void> saveSetting(String key, String value) async {
+    _settings[key] = value;
+  }
+
+  @override
+  Future<void> deleteSetting(String key) async => _settings.remove(key);
+
+  @override
   Future<List<int>> loadCustomColors() async => [..._customColors];
 
   @override
   Future<void> addCustomColor(int argb) async {
     if (!_customColors.contains(argb)) _customColors.add(argb);
+  }
+
+  @override
+  Future<TaskBackup> exportBackup() async => TaskBackup(
+    exportedAt: DateTime.now(),
+    tasks: [..._tasks],
+    colors: {..._colors},
+    customColors: [..._customColors],
+  );
+
+  @override
+  Future<void> restoreBackup(TaskBackup backup) async {
+    _tasks
+      ..clear()
+      ..addAll(backup.tasks);
+    _colors
+      ..clear()
+      ..addAll(backup.colors);
+    _customColors
+      ..clear()
+      ..addAll(backup.customColors);
   }
 
   @override

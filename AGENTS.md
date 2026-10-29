@@ -47,6 +47,7 @@ We will be following the milestones one by one. Once you've completed one, stop 
 2. Search and filtering
 3. Backup and restore
 4. Biometrics and backup encryption
+5. F-Droid release
 
 ## Instructions
 

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kronos/data/task_repository.dart';
 import 'package:kronos/domain/task.dart';
+import 'package:kronos/domain/task_backup.dart';
+import 'package:kronos/domain/task_filter.dart';
 import 'package:kronos/presentation/task_view_model.dart';
 
 void main() {
@@ -111,6 +113,22 @@ void main() {
     expect(restarted.themeMode, ThemeMode.dark);
   });
 
+  test('applies completed-task filters without hiding running tasks', () async {
+    await viewModel.startTask('Write report');
+    await viewModel.stopTask(viewModel.runningTasks.single);
+    await viewModel.startTask('Review');
+    await viewModel.stopTask(viewModel.runningTasks.single);
+    await viewModel.startTask('Current task');
+
+    await viewModel.applyFilter(const TaskFilter(query: 'write'));
+
+    expect(viewModel.completedTasks, hasLength(1));
+    expect(viewModel.completedTasks.single.name, 'Write report');
+    expect(viewModel.runningTasks.single.name, 'Current task');
+    expect(viewModel.filter.isActive, isTrue);
+    expect(viewModel.hasMoreCompleted, isFalse);
+  });
+
   test('persists custom swatches and task notes', () async {
     const color = Color(0xFF12ABCD);
     await viewModel.addCustomColor(color);
@@ -135,14 +153,21 @@ class _MemoryTaskRepository implements TaskRepository {
   final List<Task> tasks = [];
   final Map<String, int> colors = {};
   final List<int> customColors = [];
+  final Map<String, String> settings = {};
   String? themeMode;
 
   @override
-  Future<InitialTaskData> loadInitial({required int pageSize}) async {
+  Future<InitialTaskData> loadInitial({
+    required int pageSize,
+    TaskFilter filter = const TaskFilter(),
+  }) async {
     final running = tasks.where((task) => task.isRunning).toList()
       ..sort((a, b) => a.startedAt.compareTo(b.startedAt));
-    final completed = tasks.where((task) => !task.isRunning).toList()
-      ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    final completed =
+        tasks
+            .where((task) => !task.isRunning && _matches(task, filter))
+            .toList()
+          ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
     return InitialTaskData(
       runningTasks: running,
       completedPage: _page(completed, pageSize),
@@ -155,16 +180,29 @@ class _MemoryTaskRepository implements TaskRepository {
   @override
   Future<TaskPage> loadCompletedPage({
     required int pageSize,
+    TaskFilter filter = const TaskFilter(),
     TaskCursor? before,
   }) async {
-    final completed = tasks.where((task) => !task.isRunning).toList()
-      ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+    final completed =
+        tasks
+            .where((task) => !task.isRunning && _matches(task, filter))
+            .toList()
+          ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
     final remaining = before == null
         ? completed
         : completed
               .where((task) => task.startedAt.isBefore(before.startedAt))
               .toList();
     return _page(remaining, pageSize);
+  }
+
+  bool _matches(Task task, TaskFilter filter) {
+    final query = filter.query.trim().toLowerCase();
+    return (query.isEmpty || task.name.toLowerCase().contains(query)) &&
+        (filter.startedAfter == null ||
+            !task.startedAt.isBefore(filter.startedAfter!)) &&
+        (filter.startedBefore == null ||
+            !task.startedAt.isAfter(filter.startedBefore!));
   }
 
   TaskPage _page(List<Task> tasks, int pageSize) {
@@ -191,11 +229,43 @@ class _MemoryTaskRepository implements TaskRepository {
   Future<void> saveThemeMode(String mode) async => themeMode = mode;
 
   @override
+  Future<String?> loadSetting(String key) async => settings[key];
+
+  @override
+  Future<void> saveSetting(String key, String value) async {
+    settings[key] = value;
+  }
+
+  @override
+  Future<void> deleteSetting(String key) async => settings.remove(key);
+
+  @override
   Future<List<int>> loadCustomColors() async => [...customColors];
 
   @override
   Future<void> addCustomColor(int argb) async {
     if (!customColors.contains(argb)) customColors.add(argb);
+  }
+
+  @override
+  Future<TaskBackup> exportBackup() async => TaskBackup(
+    exportedAt: DateTime.now(),
+    tasks: [...tasks],
+    colors: {...colors},
+    customColors: [...customColors],
+  );
+
+  @override
+  Future<void> restoreBackup(TaskBackup backup) async {
+    tasks
+      ..clear()
+      ..addAll(backup.tasks);
+    colors
+      ..clear()
+      ..addAll(backup.colors);
+    customColors
+      ..clear()
+      ..addAll(backup.customColors);
   }
 
   @override

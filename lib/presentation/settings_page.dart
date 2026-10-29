@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 
+import '../data/backup_service.dart';
+import 'backup_settings_panel.dart';
+
 class SettingsPage extends StatefulWidget {
   const SettingsPage({
     super.key,
     required this.themeMode,
     required this.onThemeModeChanged,
+    this.backupService,
+    this.onBackupImported,
   });
 
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onThemeModeChanged;
+  final BackupService? backupService;
+  final Future<void> Function()? onBackupImported;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -69,6 +76,22 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ),
           ),
+          if (widget.backupService != null) ...[
+            const SizedBox(height: 28),
+            Text(
+              'DATA & BACKUP',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(height: 8),
+            BackupSettingsPanel(
+              service: widget.backupService!,
+              onBackupImported: widget.onBackupImported,
+            ),
+          ],
         ],
       ),
     );
