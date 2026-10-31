@@ -38,6 +38,30 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('swiping a completed task reveals a start action', (
+    tester,
+  ) async {
+    final repository = _MemoryTaskRepository();
+    final viewModel = TaskViewModel(repository);
+    await viewModel.startTask('Planning');
+    await viewModel.stopTask(viewModel.runningTasks.single);
+    await tester.pumpWidget(KronosApp(viewModel: viewModel));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.drag(find.text('Planning'), const Offset(-280, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Start'), findsOneWidget);
+
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(viewModel.runningTasks, hasLength(1));
+    expect(viewModel.runningTasks.single.name, 'Planning');
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('settings can select and persist the dark theme', (tester) async {
     final repository = _MemoryTaskRepository();
     final viewModel = TaskViewModel(repository);

@@ -41,6 +41,7 @@ dependencies:
   workmanager: ^0.10.10
   saf_stream: ^4.0.3
   path_provider: ^2.1.6
+  flutter_slidable: ^4.0.3
 
 dev_dependencies:
   flutter_test:

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 
 import '../data/backup_service.dart';
 import '../domain/task.dart';
@@ -139,9 +140,6 @@ class _HomePageState extends State<HomePage> {
                   child: CustomScrollView(
                     key: const Key('task-list'),
                     slivers: [
-                      const SliverToBoxAdapter(
-                        child: _SectionHeading(title: 'COMPLETED'),
-                      ),
                       if (widget.viewModel.isFiltering)
                         const SliverFillRemaining(
                           hasScrollBody: false,
@@ -157,7 +155,7 @@ class _HomePageState extends State<HomePage> {
                         for (final entry in grouped.entries) ...[
                           SliverToBoxAdapter(
                             child: Padding(
-                              padding: const EdgeInsets.fromLTRB(22, 12, 22, 5),
+                              padding: const EdgeInsets.fromLTRB(20, 8, 20, 3),
                               child: Text(
                                 _dateLabel(entry.key),
                                 style: Theme.of(context).textTheme.labelMedium
@@ -177,6 +175,9 @@ class _HomePageState extends State<HomePage> {
                               return _CompletedTaskTile(
                                 task: task,
                                 color: widget.viewModel.colorFor(task.name),
+                                onStart: () => unawaited(
+                                  widget.viewModel.startTask(task.name),
+                                ),
                                 onTap: () => _openDetails(context, task),
                                 onDelete: () => _confirmDelete(context, task),
                               );
@@ -190,7 +191,7 @@ class _HomePageState extends State<HomePage> {
                             child: Center(child: CircularProgressIndicator()),
                           ),
                         ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 20)),
+                      const SliverToBoxAdapter(child: SizedBox(height: 14)),
                     ],
                   ),
                 ),
@@ -265,24 +266,6 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class _SectionHeading extends StatelessWidget {
-  const _SectionHeading({required this.title});
-  final String title;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(22, 12, 22, 7),
-    child: Text(
-      title,
-      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-        color: Theme.of(context).colorScheme.onSurfaceVariant,
-        letterSpacing: 1.15,
-        fontWeight: FontWeight.w700,
-      ),
-    ),
-  );
-}
-
 class _RunningTaskTile extends StatelessWidget {
   const _RunningTaskTile({
     required this.task,
@@ -337,40 +320,61 @@ class _CompletedTaskTile extends StatelessWidget {
   const _CompletedTaskTile({
     required this.task,
     required this.color,
+    required this.onStart,
     required this.onTap,
     required this.onDelete,
   });
   final Task task;
   final Color? color;
+  final VoidCallback onStart;
   final VoidCallback onTap;
   final VoidCallback onDelete;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    onLongPress: onDelete,
-    child: _TaskCard(
-      color: color,
-      onTap: onTap,
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              task.name,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+  Widget build(BuildContext context) => Slidable(
+    key: ValueKey(task.id),
+    endActionPane: ActionPane(
+      motion: const BehindMotion(),
+      extentRatio: 0.29,
+      children: [
+        SlidableAction(
+          onPressed: (context) {
+            unawaited(Slidable.of(context)?.close());
+            onStart();
+          },
+          backgroundColor: Theme.of(context).colorScheme.secondary,
+          foregroundColor: Theme.of(context).colorScheme.onSecondary,
+          icon: Icons.play_arrow_rounded,
+          label: 'Start',
+        ),
+      ],
+    ),
+    child: GestureDetector(
+      onLongPress: onDelete,
+      child: _TaskCard(
+        color: color,
+        onTap: onTap,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                task.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
-          ),
-          Text(
-            _duration(task.durationAt(task.endedAt!)),
-            style: TextStyle(
+            Text(
+              _duration(task.durationAt(task.endedAt!)),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Icon(
+              Icons.chevron_right_rounded,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
-          ),
-          const SizedBox(width: 10),
-          Icon(
-            Icons.chevron_right_rounded,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ],
+          ],
+        ),
       ),
     ),
   );
@@ -388,7 +392,7 @@ class _TaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
     child: Material(
       color: Theme.of(context).colorScheme.surface,
       borderRadius: BorderRadius.circular(15),
@@ -397,10 +401,10 @@ class _TaskCard extends StatelessWidget {
         onTap: onTap,
         child: Row(
           children: [
-            Container(width: 5, height: 58, color: color ?? Colors.transparent),
+            Container(width: 5, height: 48, color: color ?? Colors.transparent),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 12, 8),
+                padding: const EdgeInsets.fromLTRB(12, 5, 10, 5),
                 child: child,
               ),
             ),
