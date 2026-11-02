@@ -248,24 +248,37 @@ class _MemoryTaskRepository implements TaskRepository {
   }
 
   @override
-  Future<TaskBackup> exportBackup() async => TaskBackup(
-    exportedAt: DateTime.now(),
-    tasks: [...tasks],
-    colors: {...colors},
-    customColors: [...customColors],
-  );
+  Stream<BackupEntry> exportBackupEntries() async* {
+    yield BackupHeader(DateTime.now());
+    for (final task in tasks) {
+      yield BackupTaskEntry(task);
+    }
+    for (final entry in colors.entries) {
+      yield BackupColorEntry(entry.key, entry.value);
+    }
+    for (final argb in customColors) {
+      yield BackupCustomColorEntry(argb);
+    }
+  }
 
   @override
-  Future<void> restoreBackup(TaskBackup backup) async {
+  Future<void> restoreBackup(Stream<BackupEntry> entries) async {
+    final restored = await entries.toList();
     tasks
       ..clear()
-      ..addAll(backup.tasks);
+      ..addAll(
+        restored.whereType<BackupTaskEntry>().map((entry) => entry.task),
+      );
     colors
       ..clear()
-      ..addAll(backup.colors);
+      ..addEntries(
+        restored.whereType<BackupColorEntry>().map(
+          (entry) => MapEntry(entry.key, entry.argb),
+        ),
+      );
     customColors
       ..clear()
-      ..addAll(backup.customColors);
+      ..addAll(restored.whereType<BackupCustomColorEntry>().map((e) => e.argb));
   }
 
   @override

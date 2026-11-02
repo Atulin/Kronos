@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -131,13 +130,12 @@ void main() {
       await repository.saveThemeMode('dark');
       await repository.saveSetting('automatic_backups_enabled', 'true');
 
-      final exported = await repository.exportBackup();
-      final decoded = TaskBackup.fromJson(
-        jsonDecode(jsonEncode(exported.toJson())),
-      );
+      final csv = (await encodeBackup(
+        repository.exportBackupEntries(),
+      ).toList()).join();
       await repository.deleteTask('original');
       await repository.saveThemeMode('light');
-      await repository.restoreBackup(decoded);
+      await repository.restoreBackup(decodeBackup(Stream.value(csv)));
 
       final restored = await repository.loadInitial(pageSize: 10);
       expect(restored.completedPage.tasks.single.id, 'original');
@@ -171,13 +169,15 @@ void main() {
       );
       await repository.addCustomColor(0xFFABCDEF);
 
-      final backup = await repository.exportBackup();
-      expect(backup.tasks.single.notes, 'Original notes');
+      final csv = (await encodeBackup(
+        repository.exportBackupEntries(),
+      ).toList()).join();
+      expect(csv, contains('Original notes'));
 
       await repository.saveTask(
         Task(id: 'later', name: 'Different', startedAt: DateTime.utc(2026)),
       );
-      await repository.restoreBackup(backup);
+      await repository.restoreBackup(decodeBackup(Stream.value(csv)));
 
       final restored = await repository.loadInitial(pageSize: 10);
       expect(restored.runningTasks, isEmpty);
@@ -187,6 +187,39 @@ void main() {
       expect(restored.customColors, [0xFFABCDEF]);
     },
   );
+
+  test('a failed restore leaves the existing data untouched', () async {
+    final repository = SqliteTaskRepository(
+      factory: databaseFactoryFfi,
+      databasePath: () async => inMemoryDatabasePath,
+    );
+    addTearDown(repository.close);
+    final existing = Task(
+      id: 'existing',
+      name: 'Keep me',
+      startedAt: DateTime.utc(2026),
+    );
+    await repository.saveTask(existing);
+    final duplicate = Task(
+      id: 'duplicate',
+      name: 'Twice',
+      startedAt: DateTime.utc(2025),
+    );
+
+    await expectLater(
+      repository.restoreBackup(
+        Stream.fromIterable([
+          BackupHeader(DateTime.utc(2026)),
+          BackupTaskEntry(duplicate),
+          BackupTaskEntry(duplicate),
+        ]),
+      ),
+      throwsFormatException,
+    );
+
+    final loaded = await repository.loadInitial(pageSize: 10);
+    expect(loaded.runningTasks.map((task) => task.id), ['existing']);
+  });
 
   test(
     'filters task names and started-at bounds through cursor pages',

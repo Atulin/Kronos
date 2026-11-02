@@ -10,6 +10,7 @@ import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
     private var directoryPickerResult: MethodChannel.Result? = null
+    private var createDocumentResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -36,6 +37,26 @@ class MainActivity : FlutterActivity() {
                         startActivityForResult(intent, BACKUP_DIRECTORY_REQUEST)
                     } catch (exception: Exception) {
                         directoryPickerResult = null
+                        result.error("picker_unavailable", exception.message, null)
+                    }
+                }
+
+                "createBackupFile" -> {
+                    if (createDocumentResult != null) {
+                        result.error("picker_busy", "A file picker is already open.", null)
+                        return@setMethodCallHandler
+                    }
+
+                    createDocumentResult = result
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = call.argument<String>("mimeType")
+                        putExtra(Intent.EXTRA_TITLE, call.argument<String>("fileName"))
+                    }
+                    try {
+                        startActivityForResult(intent, CREATE_BACKUP_REQUEST)
+                    } catch (exception: Exception) {
+                        createDocumentResult = null
                         result.error("picker_unavailable", exception.message, null)
                     }
                 }
@@ -76,6 +97,13 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Deprecated by Android, retained for FlutterActivity result routing")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == CREATE_BACKUP_REQUEST) {
+            val result = createDocumentResult ?: return
+            createDocumentResult = null
+            val uri = if (resultCode == Activity.RESULT_OK) data?.data?.toString() else null
+            result.success(uri)
+            return
+        }
         if (requestCode != BACKUP_DIRECTORY_REQUEST) return
 
         val result = directoryPickerResult ?: return
@@ -101,5 +129,6 @@ class MainActivity : FlutterActivity() {
 
     private companion object {
         const val BACKUP_DIRECTORY_REQUEST = 48127
+        const val CREATE_BACKUP_REQUEST = 48128
     }
 }

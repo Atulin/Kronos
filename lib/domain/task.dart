@@ -33,24 +33,6 @@ class Task {
     endedAt: clearEndedAt ? null : endedAt ?? this.endedAt,
     notes: notes ?? this.notes,
   );
-
-  Map<String, Object?> toJson() => {
-    'id': id,
-    'name': name,
-    'startedAt': startedAt.toIso8601String(),
-    'endedAt': endedAt?.toIso8601String(),
-    'notes': notes,
-  };
-
-  factory Task.fromJson(Map<String, Object?> json) => Task(
-    id: json['id']! as String,
-    name: json['name']! as String,
-    startedAt: DateTime.parse(json['startedAt']! as String),
-    endedAt: json['endedAt'] == null
-        ? null
-        : DateTime.parse(json['endedAt']! as String),
-    notes: json['notes'] as String? ?? '',
-  );
 }
 
 const taskColors = <Color>[

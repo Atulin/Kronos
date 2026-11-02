@@ -54,8 +54,8 @@ abstract interface class TaskRepository {
   Future<void> deleteSetting(String key);
   Future<List<int>> loadCustomColors();
   Future<void> addCustomColor(int argb);
-  Future<TaskBackup> exportBackup();
-  Future<void> restoreBackup(TaskBackup backup);
+  Stream<BackupEntry> exportBackupEntries();
+  Future<void> restoreBackup(Stream<BackupEntry> entries);
   Future<void> saveTask(
     Task task, {
     String? colorKey,
@@ -327,62 +327,70 @@ class SqliteTaskRepository implements TaskRepository {
   }
 
   @override
-  Future<TaskBackup> exportBackup() async {
+  Stream<BackupEntry> exportBackupEntries() async* {
     final db = await _db;
-    return db.transaction((transaction) async {
-      final taskRows = await transaction.query(
-        'tasks',
-        orderBy: 'started_at ASC, id ASC',
-      );
-      final colorRows = await transaction.query('task_colors');
-      final customColorRows = await transaction.query(
-        'custom_colors',
-        columns: ['argb'],
-        orderBy: 'id ASC',
-      );
-      return TaskBackup(
-        exportedAt: DateTime.now().toUtc(),
-        tasks: taskRows.map(_taskFromRow).toList(),
-        colors: {
-          for (final row in colorRows)
-            row['name_key']! as String: row['argb']! as int,
-        },
-        customColors: customColorRows
-            .map((row) => row['argb']! as int)
-            .toList(),
-      );
-    });
+    yield BackupHeader(DateTime.now());
+    final cursor = await db.queryCursor(
+      'tasks',
+      orderBy: 'started_at ASC, id ASC',
+      bufferSize: 256,
+    );
+    try {
+      while (await cursor.moveNext()) {
+        yield BackupTaskEntry(_taskFromRow(cursor.current));
+      }
+    } finally {
+      await cursor.close();
+    }
+    final colorRows = await db.query('task_colors', orderBy: 'name_key ASC');
+    for (final row in colorRows) {
+      yield BackupColorEntry(row['name_key']! as String, row['argb']! as int);
+    }
+    final customColorRows = await db.query(
+      'custom_colors',
+      columns: ['argb'],
+      orderBy: 'id ASC',
+    );
+    for (final row in customColorRows) {
+      yield BackupCustomColorEntry(row['argb']! as int);
+    }
   }
 
   @override
-  Future<void> restoreBackup(TaskBackup backup) async {
+  Future<void> restoreBackup(Stream<BackupEntry> entries) async {
     final db = await _db;
-    await db.transaction((transaction) async {
-      await transaction.delete('tasks');
-      await transaction.delete('task_colors');
-      await transaction.delete('custom_colors');
-
-      final batch = transaction.batch();
-      for (final task in backup.tasks) {
-        batch.insert('tasks', {
-          'id': task.id,
-          'name': task.name,
-          'started_at': task.startedAt.toIso8601String(),
-          'ended_at': task.endedAt?.toIso8601String(),
-          'notes': task.notes,
-        });
-      }
-      for (final entry in backup.colors.entries) {
-        batch.insert('task_colors', {
-          'name_key': entry.key,
-          'argb': entry.value,
-        });
-      }
-      for (final color in backup.customColors) {
-        batch.insert('custom_colors', {'argb': color});
-      }
-      await batch.commit(noResult: true);
-    });
+    try {
+      await db.transaction((transaction) async {
+        await transaction.delete('tasks');
+        await transaction.delete('task_colors');
+        await transaction.delete('custom_colors');
+        await for (final entry in entries) {
+          switch (entry) {
+            case BackupHeader():
+              break;
+            case BackupTaskEntry(:final task):
+              await transaction.insert('tasks', {
+                'id': task.id,
+                'name': task.name,
+                'started_at': task.startedAt.toIso8601String(),
+                'ended_at': task.endedAt?.toIso8601String(),
+                'notes': task.notes,
+              });
+            case BackupColorEntry(:final key, :final argb):
+              await transaction.insert('task_colors', {
+                'name_key': key,
+                'argb': argb,
+              });
+            case BackupCustomColorEntry(:final argb):
+              await transaction.insert('custom_colors', {'argb': argb});
+          }
+        }
+      });
+    } on DatabaseException {
+      throw const FormatException(
+        'The backup could not be restored; it may contain duplicate tasks.',
+      );
+    }
   }
 
   @override

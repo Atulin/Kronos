@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
@@ -23,11 +24,16 @@ class BackupService {
   static const _directoryNameKey = 'automatic_backup_directory_name';
   static const _lastBackupKey = 'last_backup_at';
   static const _scheduledFrequencyKey = 'scheduled_backup_frequency';
-  static const _directoryChannel = MethodChannel(
+  static const _backupChannel = MethodChannel(
     'cc.angius.kronos/backup_directory',
   );
+  static const _chunkSize = 64 * 1024;
+  static const _extension = 'csv';
+  static const _mimeType = 'text/csv';
+  static const _automaticBackupFileName = 'kronos-automatic-backup.csv';
 
   final TaskRepository _repository;
+  final _saf = SafStream();
 
   Future<BackupPreferences> loadPreferences() async {
     final settings = await Future.wait([
@@ -58,7 +64,7 @@ class BackupService {
   }
 
   Future<bool> chooseDirectory() async {
-    final result = await _directoryChannel.invokeMapMethod<String, Object?>(
+    final result = await _backupChannel.invokeMapMethod<String, Object?>(
       'pickBackupDirectory',
     );
     final uri = result?['uri'];
@@ -83,37 +89,37 @@ class BackupService {
   }
 
   Future<void> _releaseDirectoryPermission(String uri) async {
-    await _directoryChannel.invokeMethod<void>('releaseBackupDirectory', {
+    await _backupChannel.invokeMethod<void>('releaseBackupDirectory', {
       'uri': uri,
     });
   }
 
   Future<bool> exportBackup() async {
-    final backup = await _repository.exportBackup();
-    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(backup.toJson())));
-    final savedFile = await FilePicker.saveFile(
-      dialogTitle: 'Export Kronos backup',
-      fileName: _manualBackupFileName(backup.exportedAt),
-      bytes: bytes,
-      mimeType: 'application/json',
-    );
-    if (savedFile == null) return false;
+    final uri = await _backupChannel.invokeMethod<String>('createBackupFile', {
+      'fileName': _manualBackupFileName(DateTime.now()),
+      'mimeType': _mimeType,
+    });
+    if (uri == null) return false;
+    final stream = await _saf.startWriteFileUriStream(uri);
+    await _writeSession(stream.session, _chunks(_encodedBackup()));
     await _recordBackup(DateTime.now());
     return true;
   }
 
-  Future<TaskBackup?> pickBackup() async {
+  Future<PlatformFile?> pickBackupFile() async {
     final file = await FilePicker.pickFile();
     if (file == null) return null;
-    if (!file.name.toLowerCase().endsWith('.json')) {
-      throw const FormatException('Choose a Kronos JSON backup file.');
+    if (!file.name.toLowerCase().endsWith('.$_extension')) {
+      throw const FormatException('Choose a Kronos CSV backup file.');
     }
-    final json = jsonDecode(utf8.decode(await file.readAsBytes()));
-    return TaskBackup.fromJson(json);
+    return file;
   }
 
-  Future<void> restoreBackup(TaskBackup backup) async {
-    await _repository.restoreBackup(backup);
+  Future<void> importBackup(PlatformFile file) {
+    final Stream<List<int>> bytes = file.readAsByteStream();
+    return _repository.restoreBackup(
+      decodeBackup(bytes.transform(utf8.decoder)),
+    );
   }
 
   Future<void> syncSchedule() async {
@@ -148,17 +154,15 @@ class BackupService {
     final preferences = await loadPreferences();
     if (!preferences.enabled) return;
 
-    final backup = await _repository.exportBackup();
-    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(backup.toJson())));
     final treeUri = preferences.directoryUri;
     if (treeUri != null) {
-      await SafStream().writeFileBytes(
+      final stream = await _saf.startWriteStream(
         treeUri,
-        'kronos-automatic-backup.json',
-        'application/json',
-        bytes,
+        _automaticBackupFileName,
+        _mimeType,
         overwrite: true,
       );
+      await _writeSession(stream.session, _chunks(_encodedBackup()));
     } else {
       final documents = await getApplicationDocumentsDirectory();
       final backupDirectory = Directory(
@@ -166,13 +170,42 @@ class BackupService {
       );
       await backupDirectory.create(recursive: true);
       final destination = File(
-        paths.join(backupDirectory.path, 'kronos-automatic-backup.json'),
+        paths.join(backupDirectory.path, _automaticBackupFileName),
       );
       final temporaryFile = File('${destination.path}.tmp');
-      await temporaryFile.writeAsBytes(bytes, flush: true);
+      final sink = temporaryFile.openWrite();
+      try {
+        await sink.addStream(_chunks(_encodedBackup()));
+      } finally {
+        await sink.close();
+      }
       await temporaryFile.rename(destination.path);
     }
     await _recordBackup(DateTime.now());
+  }
+
+  Stream<List<int>> _encodedBackup() =>
+      encodeBackup(_repository.exportBackupEntries()).transform(utf8.encoder);
+
+  /// Groups small encoded pieces into chunks of about [_chunkSize] bytes so
+  /// that each platform call writes a useful amount of data.
+  static Stream<Uint8List> _chunks(Stream<List<int>> bytes) async* {
+    final buffer = BytesBuilder(copy: false);
+    await for (final part in bytes) {
+      buffer.add(part);
+      if (buffer.length >= _chunkSize) yield buffer.takeBytes();
+    }
+    if (buffer.isNotEmpty) yield buffer.takeBytes();
+  }
+
+  Future<void> _writeSession(String session, Stream<Uint8List> chunks) async {
+    try {
+      await for (final chunk in chunks) {
+        await _saf.writeChunk(session, chunk);
+      }
+    } finally {
+      await _saf.endWriteStream(session);
+    }
   }
 
   Future<void> _recordBackup(DateTime at) =>
@@ -180,6 +213,6 @@ class BackupService {
 
   String _manualBackupFileName(DateTime at) {
     final timestamp = at.toUtc().toIso8601String().replaceAll(':', '-');
-    return 'kronos-backup-$timestamp.json';
+    return 'kronos-backup-$timestamp.$_extension';
   }
 }

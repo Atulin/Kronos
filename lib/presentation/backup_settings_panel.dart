@@ -1,8 +1,8 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../data/backup_service.dart';
 import '../domain/backup_preferences.dart';
-import '../domain/task_backup.dart';
 
 class BackupSettingsPanel extends StatefulWidget {
   const BackupSettingsPanel({
@@ -52,7 +52,7 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
             value: preferences.enabled,
             onChanged: _busy ? null : _setEnabled,
             title: const Text('Automatic backups'),
-            subtitle: const Text('Keep a scheduled JSON backup up to date'),
+            subtitle: const Text('Keep a scheduled CSV backup up to date'),
             secondary: const Icon(Icons.backup_outlined),
           ),
           if (preferences.enabled) ...[
@@ -128,7 +128,7 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Text(
-              'JSON backups are not encrypted yet. Android may delay scheduled backups to save battery.',
+              'CSV backups are not encrypted yet. Android may delay scheduled backups to save battery.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -166,21 +166,22 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
   }
 
   Future<void> _import() async {
-    TaskBackup? backup;
+    final PlatformFile? file;
     try {
-      backup = await widget.service.pickBackup();
+      file = await widget.service.pickBackupFile();
     } catch (error) {
-      if (mounted) _showMessage('Could not read backup: $error');
+      if (mounted) _showMessage('Could not open backup: $error');
       return;
     }
-    if (backup == null || !mounted) return;
+    if (file == null || !mounted) return;
+    final selected = file;
 
     final shouldRestore = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Replace all task data?'),
         content: Text(
-          'This backup contains ${backup!.tasks.length} tasks. Importing it will replace all current tasks, task colors, and custom color swatches.',
+          'Importing “${selected.name}” will replace all current tasks, task colors, and custom color swatches.',
         ),
         actions: [
           TextButton(
@@ -197,7 +198,7 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
     if (shouldRestore != true || !mounted) return;
 
     await _perform(() async {
-      await widget.service.restoreBackup(backup!);
+      await widget.service.importBackup(selected);
       await widget.onBackupImported?.call();
       if (mounted) _showMessage('Backup restored.');
     });
