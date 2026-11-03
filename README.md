@@ -15,16 +15,16 @@ everything you did and how long it took.
   and sorted most-recent-first.
 - **Task details** — tap any entry to view and edit its name, start and end
   times, notes, and color. Clearing the end time puts the task back into
-  running state.
+  running state. Timestamps are stored as UTC so history survives timezone
+  changes, and displayed in the device's local time.
 - **Shared colors** — all tasks with the same name share one color; editing it
   in one place recolors them all. Custom swatches you add to the palette are
   remembered too.
 - **Search and filtering** — filter finished tasks by name and by when they
   *started*, so they're easy to find even in months of history.
-- **Backups** — CSV files you can open in any spreadsheet. Export manually or
-  schedule automatic backups to a folder of your choice. Both export and
-  import work on streams, so backups are written and read in chunks no matter
-  how large the history gets.
+- **Backups** — a ZIP file of one CSV per content type (`tasks.csv`,
+  `task_colors.csv`, …), each a spec-compliant spreadsheet-ready table.
+  Export manually or schedule automatic backups to a folder of your choice.
 - **Analytics** — see the average, median, minimum, and maximum duration for a
   task, either of the task itself or of time between one instance ending and
   the next starting, with a bar chart over any period: day, week, month, year,

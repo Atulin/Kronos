@@ -118,10 +118,11 @@ class _HomePageState extends State<HomePage> {
           final completed = widget.viewModel.completedTasks;
           final grouped = <DateTime, List<Task>>{};
           for (final task in completed) {
+            final localStart = task.startedAt.toLocal();
             final day = DateTime(
-              task.startedAt.year,
-              task.startedAt.month,
-              task.startedAt.day,
+              localStart.year,
+              localStart.month,
+              localStart.day,
             );
             (grouped[day] ??= []).add(task);
           }

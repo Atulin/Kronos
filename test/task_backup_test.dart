@@ -1,12 +1,35 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kronos/domain/task.dart';
 import 'package:kronos/domain/task_backup.dart';
 
-Future<String> _encode(List<BackupEntry> entries) async =>
-    (await encodeBackup(Stream.fromIterable(entries)).toList()).join();
+Future<Uint8List> _encode(List<BackupEntry> entries) =>
+    encodeBackup(Stream.fromIterable(entries));
 
-Future<List<BackupEntry>> _decode(Stream<String> text) =>
-    decodeBackup(text).toList();
+Future<List<BackupEntry>> _decode(List<int> bytes) =>
+    decodeBackup(Stream.value(bytes)).toList();
+
+Map<String, String> _fileContents(List<int> bytes) => {
+  for (final file in ZipDecoder().decodeBytes(bytes))
+    file.name: utf8.decode(file.content),
+};
+
+ArchiveFile _file(String name, String content) =>
+    ArchiveFile(name, content.length, utf8.encode(content));
+
+Archive _zipOf(List<ArchiveFile> files) {
+  final zip = Archive();
+  for (final file in files) {
+    zip.addFile(file);
+  }
+  return zip;
+}
+
+const _metadata =
+    'format_version,exported_at\r\n2,2026-01-01T00:00:00.000Z\r\n';
 
 void main() {
   test('round-trips the header, tasks, and both kinds of color', () async {
@@ -20,13 +43,13 @@ void main() {
       notes: 'Roadmap\nFollow-ups',
     );
 
-    final csv = await _encode([
+    final zip = await _encode([
       BackupHeader(exportedAt),
       BackupTaskEntry(task),
       const BackupColorEntry('planning', 0xFF123456),
       const BackupCustomColorEntry(0xFFABCDEF),
     ]);
-    final decoded = await _decode(Stream.value(csv));
+    final decoded = await _decode(zip);
 
     expect((decoded[0] as BackupHeader).exportedAt, exportedAt);
     expect((decoded[1] as BackupTaskEntry).task.notes, 'Roadmap\nFollow-ups');
@@ -36,31 +59,69 @@ void main() {
     expect((decoded[3] as BackupCustomColorEntry).argb, 0xFFABCDEF);
   });
 
-  test(
-    'starts with a single #kronos-backup line and omits per-row types',
-    () async {
-      final csv = await _encode([
+  test('writes one spec-compliant CSV per content type', () async {
+    final files = _fileContents(
+      await _encode([
         BackupHeader(DateTime.utc(2026)),
         BackupTaskEntry(
           Task(id: 'task-1', name: 'Planning', startedAt: DateTime.utc(2026)),
         ),
-      ]);
+        const BackupColorEntry('planning', 0xFF123456),
+        const BackupCustomColorEntry(0xFFABCDEF),
+      ]),
+    );
 
-      final lines = csv.split('\r\n');
-      expect(
-        lines.first,
-        startsWith('#kronos-backup,1,2026-01-01T00:00:00.000Z'),
-      );
-      expect(lines[1], '#tasks,id,name,started_at,ended_at,notes');
-      expect(lines[2], startsWith('task-1,Planning,'));
-      expect(csv, isNot(contains('meta')));
-    },
-  );
+    expect(files.keys, [
+      'backup.csv',
+      'tasks.csv',
+      'task_colors.csv',
+      'custom_colors.csv',
+    ]);
+    expect(files['backup.csv']!.split('\r\n'), [
+      'format_version,exported_at',
+      '2,2026-01-01T00:00:00.000Z',
+      '',
+    ]);
+    final taskLines = files['tasks.csv']!.split('\r\n');
+    expect(taskLines[0], 'id,name,started_at,ended_at,notes');
+    expect(taskLines[1], startsWith('task-1,Planning,'));
+    expect(files['task_colors.csv']!.split('\r\n'), [
+      'name_key,argb',
+      'planning,${0xFF123456}',
+      '',
+    ]);
+    expect(files['custom_colors.csv']!.split('\r\n'), [
+      'argb',
+      '${0xFFABCDEF}',
+      '',
+    ]);
+  });
+
+  test('omits per-row types and #-directives entirely', () async {
+    final files = _fileContents(
+      await _encode([
+        BackupHeader(DateTime.utc(2026)),
+        BackupTaskEntry(
+          Task(id: 'task-1', name: 'Planning', startedAt: DateTime.utc(2026)),
+        ),
+        const BackupCustomColorEntry(0xFF000000),
+      ]),
+    );
+
+    for (final content in files.values) {
+      expect(content.split('\r\n'), everyElement(isNot(contains('#'))));
+    }
+    expect(files['tasks.csv']!.split('\r\n'), [
+      'id,name,started_at,ended_at,notes',
+      startsWith('task-1,Planning,'),
+      '',
+    ]);
+  });
 
   test('preserves delimiters, quotes, and number-like names exactly', () async {
     final startedAt = DateTime.utc(2026, 1, 1);
     final names = ['Write; review | "draft", 1e5', '007', 'true'];
-    final csv = await _encode([
+    final zip = await _encode([
       BackupHeader(DateTime.utc(2026)),
       for (final (index, name) in names.indexed)
         BackupTaskEntry(
@@ -73,17 +134,25 @@ void main() {
         ),
     ]);
 
-    final tasks = (await _decode(
-      Stream.value(csv),
-    )).whereType<BackupTaskEntry>().map((entry) => entry.task).toList();
+    final tasks = (await _decode(zip)).whereType<BackupTaskEntry>().map(
+      (entry) => entry.task,
+    ).toList();
 
     expect(tasks.map((task) => task.name), names);
     expect(tasks.first.notes, 'Notes, with "quotes"\nand a newline');
     expect(tasks.first.endedAt, isNull);
   });
 
+  test('round-trips an empty backup as headers only', () async {
+    final decoded = await _decode(
+      await _encode([BackupHeader(DateTime.utc(2026))]),
+    );
+
+    expect((decoded.single as BackupHeader).exportedAt, DateTime.utc(2026));
+  });
+
   test('decodes the same backup when split into tiny chunks', () async {
-    final csv = await _encode([
+    final zip = await _encode([
       BackupHeader(DateTime.utc(2026)),
       BackupTaskEntry(
         Task(
@@ -96,34 +165,45 @@ void main() {
       const BackupCustomColorEntry(0xFF000000),
     ]);
     final chunks = [
-      for (var i = 0; i < csv.length; i += 3)
-        csv.substring(i, i + 3 > csv.length ? csv.length : i + 3),
+      for (var i = 0; i < zip.length; i += 3)
+        Uint8List.sublistView(zip, i, i + 3 > zip.length ? zip.length : i + 3),
     ];
 
-    final decoded = await _decode(Stream.fromIterable(chunks));
+    final decoded = await decodeBackup(Stream.fromIterable(chunks)).toList();
 
     expect((decoded[1] as BackupTaskEntry).task.name, 'Split, "across"\nlines');
     expect((decoded[2] as BackupCustomColorEntry).argb, 0xFF000000);
   });
 
-  test('rejects a file that is not a Kronos backup', () async {
+  test('rejects bytes that are not a ZIP archive', () async {
     await expectLater(
-      _decode(Stream.value('{"format":"kronos-backup"}')),
+      _decode(utf8.encode('{"format":"kronos-backup"}')),
       throwsFormatException,
     );
-    await expectLater(_decode(Stream.value('')), throwsFormatException);
+    await expectLater(_decode(const []), throwsFormatException);
+  });
+
+  test('rejects a ZIP without Kronos section files', () async {
+    final zip = ZipEncoder().encodeBytes(
+      _zipOf([_file('something_else.csv', 'id,name\r\n')]),
+    );
+
+    await expectLater(_decode(zip), throwsFormatException);
   });
 
   test('rejects an unsupported version', () async {
-    await expectLater(
-      _decode(Stream.value('#kronos-backup,2,2026-01-01T00:00:00.000Z\r\n')),
-      throwsFormatException,
+    const versionRow = 'format_version,exported_at\r\n'
+        '3,2026-01-01T00:00:00.000Z\r\n';
+    final zip = ZipEncoder().encodeBytes(
+      _zipOf([_file('backup.csv', versionRow)]),
     );
+
+    await expectLater(_decode(zip), throwsFormatException);
   });
 
   test('rejects a task that ends before it starts', () async {
     final startedAt = DateTime.utc(2026, 1, 2);
-    final csv = await _encode([
+    final zip = await _encode([
       BackupHeader(DateTime.utc(2026)),
       BackupTaskEntry(
         Task(
@@ -135,33 +215,40 @@ void main() {
       ),
     ]);
 
-    await expectLater(_decode(Stream.value(csv)), throwsFormatException);
+    await expectLater(_decode(zip), throwsFormatException);
   });
 
-  test(
-    'rejects rows outside a section and unexpected section layouts',
-    () async {
-      const outside =
-          '#kronos-backup,1,2026-01-01T00:00:00.000Z\r\nstray,row\r\n';
-      await expectLater(_decode(Stream.value(outside)), throwsFormatException);
+  test('rejects unexpected section layouts', () async {
+    final wrongColumns = ZipEncoder().encodeBytes(
+      _zipOf([
+        _file('backup.csv', _metadata),
+        _file('tasks.csv', 'id,name\n'),
+        _file('task_colors.csv', 'name_key,argb\r\nplanning,427825006\r\n'),
+        _file('custom_colors.csv', 'argb\r\n4278190080\r\n'),
+      ]),
+    );
+    final malformedColor = ZipEncoder().encodeBytes(
+      _zipOf([
+        _file('backup.csv', _metadata),
+        _file('tasks.csv', 'id,name,started_at,ended_at,notes\r\n'),
+        _file('task_colors.csv', 'name_key,argb\r\nplanning,42782500x6\r\n'),
+        _file('custom_colors.csv', 'argb\r\n'),
+      ]),
+    );
 
-      const layout =
-          '#kronos-backup,1,2026-01-01T00:00:00.000Z\r\n'
-          '#tasks,id,name\r\n';
-      await expectLater(_decode(Stream.value(layout)), throwsFormatException);
-    },
-  );
+    await expectLater(_decode(wrongColumns), throwsFormatException);
+    await expectLater(_decode(malformedColor), throwsFormatException);
+  });
 
-  test('ignores comment lines that are not directives', () async {
-    const csv =
-        '#kronos-backup,1,2026-01-01T00:00:00.000Z\r\n'
-        '# exported by hand\r\n'
-        '#custom_colors,argb\r\n'
-        '4278190080\r\n';
+  test('rejects a missing section file', () async {
+    final zip = ZipEncoder().encodeBytes(
+      _zipOf([
+        _file('backup.csv', _metadata),
+        _file('tasks.csv', 'id,name,started_at,ended_at,notes\r\n'),
+        _file('task_colors.csv', 'name_key,argb\r\n'),
+      ]),
+    );
 
-    final decoded = await _decode(Stream.value(csv));
-
-    expect(decoded, hasLength(2));
-    expect((decoded[1] as BackupCustomColorEntry).argb, 4278190080);
+    await expectLater(_decode(zip), throwsFormatException);
   });
 }

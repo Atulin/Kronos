@@ -85,7 +85,7 @@ class SqliteTaskRepository implements TaskRepository {
     return _databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE tasks (
@@ -126,6 +126,9 @@ class SqliteTaskRepository implements TaskRepository {
           }
           if (oldVersion < 4) {
             await _createAnalyticsIndexes(db);
+          }
+          if (oldVersion < 5) {
+            await _migrateTimestampsToUtc(db);
           }
         },
       ),
@@ -225,17 +228,17 @@ class SqliteTaskRepository implements TaskRepository {
     }
     if (filter.startedAfter case final startedAfter?) {
       conditions.add('started_at >= ?');
-      whereArgs.add(startedAfter.toIso8601String());
+      whereArgs.add(_isoUtc(startedAfter));
     }
     if (filter.startedBefore case final startedBefore?) {
       conditions.add('started_at <= ?');
-      whereArgs.add(startedBefore.toIso8601String());
+      whereArgs.add(_isoUtc(startedBefore));
     }
     if (before case final cursor?) {
       conditions.add('(started_at < ? OR (started_at = ? AND id < ?))');
       whereArgs
-        ..add(cursor.startedAt.toIso8601String())
-        ..add(cursor.startedAt.toIso8601String())
+        ..add(_isoUtc(cursor.startedAt))
+        ..add(_isoUtc(cursor.startedAt))
         ..add(cursor.id);
     }
     final rows = await db.query(
@@ -372,8 +375,10 @@ class SqliteTaskRepository implements TaskRepository {
               await transaction.insert('tasks', {
                 'id': task.id,
                 'name': task.name,
-                'started_at': task.startedAt.toIso8601String(),
-                'ended_at': task.endedAt?.toIso8601String(),
+                'started_at': _isoUtc(task.startedAt),
+                'ended_at': task.endedAt == null
+                    ? null
+                    : _isoUtc(task.endedAt!),
                 'notes': task.notes,
               });
             case BackupColorEntry(:final key, :final argb):
@@ -405,8 +410,8 @@ class SqliteTaskRepository implements TaskRepository {
       await transaction.insert('tasks', {
         'id': task.id,
         'name': task.name,
-        'started_at': task.startedAt.toIso8601String(),
-        'ended_at': task.endedAt?.toIso8601String(),
+        'started_at': _isoUtc(task.startedAt),
+        'ended_at': task.endedAt == null ? null : _isoUtc(task.endedAt!),
         'notes': task.notes,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
       if (colorKey != null && colorValue != null) {
@@ -438,7 +443,7 @@ class SqliteTaskRepository implements TaskRepository {
         : 'name = ? COLLATE NOCASE AND started_at <= ?';
     final whereArgs = startedBefore == null
         ? [name]
-        : [name, startedBefore.toIso8601String()];
+        : [name, _isoUtc(startedBefore)];
     final cursor = await db.queryCursor(
       'tasks',
       where: where,
@@ -472,4 +477,37 @@ class SqliteTaskRepository implements TaskRepository {
         : DateTime.parse(row['ended_at']! as String),
     notes: row['notes'] as String? ?? '',
   );
+
+  /// ISO 8601 instant, always in UTC with the `Z` suffix.
+  static String _isoUtc(DateTime at) => at.toUtc().toIso8601String();
+
+  /// Rewrites legacy suffix-less local timestamps to UTC `Z` form.
+  ///
+  /// Rows written before schema v5 stored the device's local wall clock, so
+  /// they were interpreted in the timezone of whatever device read them next.
+  /// The conversion happens Dart-side: SQLite's datetime functions would
+  /// double-shift the strings because they treat bare timestamps as UTC.
+  static Future<void> _migrateTimestampsToUtc(DatabaseExecutor db) async {
+    final rows = await db.query(
+      'tasks',
+      columns: ['id', 'started_at', 'ended_at'],
+    );
+    for (final row in rows) {
+      final updates = <String, Object?>{};
+      final startedAt = DateTime.tryParse(row['started_at']! as String);
+      if (startedAt != null) updates['started_at'] = _isoUtc(startedAt);
+      if (row['ended_at'] case final String endedAtValue) {
+        final endedAt = DateTime.tryParse(endedAtValue);
+        if (endedAt != null) updates['ended_at'] = _isoUtc(endedAt);
+      }
+      if (updates.isNotEmpty) {
+        await db.update(
+          'tasks',
+          updates,
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+      }
+    }
+  }
 }

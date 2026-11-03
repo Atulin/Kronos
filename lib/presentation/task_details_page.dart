@@ -31,8 +31,8 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
     super.initState();
     _name = TextEditingController(text: widget.task.name);
     _notes = TextEditingController(text: widget.task.notes);
-    _start = widget.task.startedAt;
-    _end = widget.task.endedAt;
+    _start = widget.task.startedAt.toLocal();
+    _end = widget.task.endedAt?.toLocal();
     _color = widget.viewModel.colorFor(widget.task.name);
   }
 

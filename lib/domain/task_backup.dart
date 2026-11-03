@@ -1,8 +1,17 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:archive/archive.dart';
 import 'package:csv/csv.dart';
 
 import 'task.dart';
 
-const backupFormatVersion = 1;
+/// Version of the backup layout.
+///
+/// Version 2 is a ZIP archive of one RFC 4180 CSV per content type. Version
+/// 1 was a single CSV file using `#`-directives for metadata and can no
+/// longer be imported.
+const backupFormatVersion = 2;
 
 sealed class BackupEntry {
   const BackupEntry();
@@ -33,114 +42,160 @@ final class BackupCustomColorEntry extends BackupEntry {
   final int argb;
 }
 
-const _tasksSection = 'tasks';
-const _colorsSection = 'task_colors';
-const _customColorsSection = 'custom_colors';
-const _sectionColumns = {
-  _tasksSection: ['id', 'name', 'started_at', 'ended_at', 'notes'],
-  _colorsSection: ['name_key', 'argb'],
-  _customColorsSection: ['argb'],
-};
+const _backupFileName = 'backup.csv';
+const _tasksFileName = 'tasks.csv';
+const _colorsFileName = 'task_colors.csv';
+const _customColorsFileName = 'custom_colors.csv';
+
+const _tasksColumns = ['id', 'name', 'started_at', 'ended_at', 'notes'];
+const _colorsColumns = ['name_key', 'argb'];
+const _customColorsColumns = ['argb'];
+const _backupColumns = ['format_version', 'exported_at'];
 const _eol = '\r\n';
 
-/// Encodes [entries] as CSV lines.
+/// Encodes [entries] as a ZIP archive of one CSV per content type.
 ///
-/// The first line is `#kronos-backup,<version>,<exportedAt>`. Each section
-/// starts with a `#<section>` line naming its columns, so rows carry no
-/// per-row type. Lines starting with `#` are not RFC 4180 rows; decoders
-/// that don't know them can skip them.
-Stream<String> encodeBackup(Stream<BackupEntry> entries) async* {
-  var section = '';
+/// `backup.csv` holds the export metadata (format version and timestamp),
+/// while `tasks.csv`, `task_colors.csv`, and `custom_colors.csv` hold the
+/// rows. Every file starts with an RFC 4180 header row.
+Future<Uint8List> encodeBackup(Stream<BackupEntry> entries) async {
+  var exportedAt = DateTime.now();
+  final tasks = <Task>[];
+  final colors = <BackupColorEntry>[];
+  final customColors = <BackupCustomColorEntry>[];
+
   await for (final entry in entries) {
     switch (entry) {
-      case BackupHeader(:final exportedAt):
-        yield '#kronos-backup,$backupFormatVersion,'
-            '${exportedAt.toUtc().toIso8601String()}$_eol';
+      case BackupHeader(exportedAt: final at):
+        exportedAt = at;
       case BackupTaskEntry(:final task):
-        if (section != _tasksSection) {
-          section = _tasksSection;
-          yield _sectionLine(_tasksSection);
-        }
-        yield _row([
-          task.id,
-          task.name,
-          task.startedAt.toIso8601String(),
-          task.endedAt?.toIso8601String() ?? '',
-          task.notes,
-        ]);
+        tasks.add(task);
       case BackupColorEntry(:final key, :final argb):
-        if (section != _colorsSection) {
-          section = _colorsSection;
-          yield _sectionLine(_colorsSection);
-        }
-        yield _row([key, argb]);
+        colors.add(BackupColorEntry(key, argb));
       case BackupCustomColorEntry(:final argb):
-        if (section != _customColorsSection) {
-          section = _customColorsSection;
-          yield _sectionLine(_customColorsSection);
-        }
-        yield _row([argb]);
+        customColors.add(BackupCustomColorEntry(argb));
     }
   }
+
+  final zip = Archive()
+    ..addFile(
+      _csvFile(
+        _backupFileName,
+        [
+          _backupColumns,
+          [backupFormatVersion, exportedAt.toUtc().toIso8601String()],
+        ],
+      ),
+    )
+    ..addFile(
+      _csvFile(
+        _tasksFileName,
+        [
+          _tasksColumns,
+          for (final task in tasks)
+            [
+              task.id,
+              task.name,
+              task.startedAt.toUtc().toIso8601String(),
+              task.endedAt?.toUtc().toIso8601String() ?? '',
+              task.notes,
+            ],
+        ],
+      ),
+    )
+    ..addFile(
+      _csvFile(
+        _colorsFileName,
+        [
+          _colorsColumns,
+          for (final color in colors) [color.key, color.argb],
+        ],
+      ),
+    )
+    ..addFile(
+      _csvFile(
+        _customColorsFileName,
+        [
+          _customColorsColumns,
+          for (final color in customColors) [color.argb],
+        ],
+      ),
+    );
+
+  return ZipEncoder().encodeBytes(zip);
 }
 
-/// Decodes CSV text produced by [encodeBackup], one entry at a time.
-Stream<BackupEntry> decodeBackup(Stream<String> text) async* {
-  var headerSeen = false;
-  var section = '';
-  await for (final row in const CsvDecoder(fieldDelimiter: ',').bind(text)) {
-    final fields = row.map((field) => '$field').toList();
-    final first = fields.first;
-    if (first.startsWith('#')) {
-      final name = first.substring(1);
-      if (name == 'kronos-backup') {
-        if (headerSeen ||
-            fields.length != 3 ||
-            int.tryParse(fields[1]) != backupFormatVersion) {
-          throw const FormatException('Unsupported Kronos backup version.');
-        }
-        headerSeen = true;
-        yield BackupHeader(_date(fields[2]));
-      } else if (_sectionColumns.containsKey(name)) {
-        final columns = fields.sublist(1);
-        if (!_sameColumns(columns, _sectionColumns[name]!)) {
-          throw const FormatException('Backup has an unexpected layout.');
-        }
-        section = name;
-      }
-      continue;
-    }
-
-    if (!headerSeen) {
-      throw const FormatException('Not a Kronos backup file.');
-    }
-    switch (section) {
-      case _tasksSection:
-        yield BackupTaskEntry(_task(fields));
-      case _colorsSection:
-        if (fields.length != 2 || fields[0].isEmpty) {
-          throw const FormatException('Backup contains an invalid task color.');
-        }
-        yield BackupColorEntry(fields[0], _argb(fields[1]));
-      case _customColorsSection:
-        if (fields.length != 1) {
-          throw const FormatException('Backup contains invalid custom colors.');
-        }
-        yield BackupCustomColorEntry(_argb(fields[0]));
-      default:
-        throw const FormatException('Backup contains a row outside a section.');
-    }
+/// Decodes the ZIP archive produced by [encodeBackup], one entry at a time.
+Stream<BackupEntry> decodeBackup(Stream<List<int>> bytes) async* {
+  final buffer = BytesBuilder(copy: true);
+  await for (final chunk in bytes) {
+    buffer.add(chunk);
   }
-  if (!headerSeen) {
+  final data = buffer.takeBytes();
+
+  final Map<String, ArchiveFile> files;
+  try {
+    files = {
+      for (final file in ZipDecoder().decodeBytes(data)) file.name: file,
+    };
+  } catch (_) {
     throw const FormatException('Not a Kronos backup file.');
   }
+
+  final metadata = await _rowsOf(files, _backupFileName, _backupColumns);
+  if (metadata.length != 1 ||
+      int.tryParse(metadata[0][0]) != backupFormatVersion) {
+    throw const FormatException('Unsupported Kronos backup version.');
+  }
+  yield BackupHeader(_date(metadata[0][1]));
+
+  for (final row in await _rowsOf(files, _tasksFileName, _tasksColumns)) {
+    yield BackupTaskEntry(_task(row));
+  }
+  for (final row in await _rowsOf(files, _colorsFileName, _colorsColumns)) {
+    if (row.length != 2 || row[0].isEmpty) {
+      throw const FormatException('Backup contains an invalid task color.');
+    }
+    yield BackupColorEntry(row[0], _argb(row[1]));
+  }
+  for (final row in await _rowsOf(
+    files,
+    _customColorsFileName,
+    _customColorsColumns,
+  )) {
+    if (row.length != 1) {
+      throw const FormatException('Backup contains invalid custom colors.');
+    }
+    yield BackupCustomColorEntry(_argb(row[0]));
+  }
 }
 
-String _sectionLine(String name) =>
-    '#$name,${_sectionColumns[name]!.join(',')}$_eol';
+ArchiveFile _csvFile(String name, List<List<Object?>> rows) =>
+    _zipFile(name, utf8.encode('${const CsvEncoder().convert(rows)}$_eol'));
 
-String _row(List<Object> fields) =>
-    '${const CsvEncoder().convert([fields])}$_eol';
+ArchiveFile _zipFile(String name, List<int> content) =>
+    ArchiveFile(name, content.length, content);
+
+/// Reads [name] from [files] and returns its validated data rows.
+Future<List<List<String>>> _rowsOf(
+  Map<String, ArchiveFile> files,
+  String name,
+  List<String> columns,
+) async {
+  final file = files[name];
+  if (file == null) {
+    throw const FormatException('Kronos backup is missing a section file.');
+  }
+  final text = utf8.decode(file.content, allowMalformed: true);
+  final rows = await const CsvDecoder().bind(Stream.value(text)).toList();
+  if (rows.isEmpty || !_sameColumns(_stringRow(rows[0]), columns)) {
+    throw const FormatException('Backup has an unexpected layout.');
+  }
+  return [for (final row in rows.skip(1)) _stringRow(row)];
+}
+
+List<String> _stringRow(List<dynamic> fields) =>
+    [for (final field in fields) '$field'];
 
 bool _sameColumns(List<String> actual, List<String> expected) {
   if (actual.length != expected.length) return false;

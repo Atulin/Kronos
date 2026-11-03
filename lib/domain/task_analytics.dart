@@ -122,18 +122,26 @@ Future<TaskAnalytics> calculateTaskAnalytics({
   );
 }
 
-DateTime _bucketStart(DateTime value, AnalyticsBucketSize size) =>
-    switch (size) {
-      AnalyticsBucketSize.hour => DateTime(
-        value.year,
-        value.month,
-        value.day,
-        value.hour,
-      ),
-      AnalyticsBucketSize.day => DateTime(value.year, value.month, value.day),
-      AnalyticsBucketSize.month => DateTime(value.year, value.month),
-      AnalyticsBucketSize.year => DateTime(value.year),
-    };
+DateTime _bucketStart(DateTime value, AnalyticsBucketSize size) {
+  // Buckets follow the local calendar so that labels stay meaningful; the
+  // instants they derive from are stored in UTC.
+  final local = value.toLocal();
+  return switch (size) {
+    AnalyticsBucketSize.hour => DateTime(
+      local.year,
+      local.month,
+      local.day,
+      local.hour,
+    ),
+    AnalyticsBucketSize.day => DateTime(
+      local.year,
+      local.month,
+      local.day,
+    ),
+    AnalyticsBucketSize.month => DateTime(local.year, local.month),
+    AnalyticsBucketSize.year => DateTime(local.year),
+  };
+}
 
 const _monthNames = [
   'Jan',

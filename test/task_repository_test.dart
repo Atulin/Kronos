@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kronos/data/task_repository.dart';
 import 'package:kronos/domain/task.dart';
@@ -130,12 +132,10 @@ void main() {
       await repository.saveThemeMode('dark');
       await repository.saveSetting('automatic_backups_enabled', 'true');
 
-      final csv = (await encodeBackup(
-        repository.exportBackupEntries(),
-      ).toList()).join();
+      final zip = await encodeBackup(repository.exportBackupEntries());
       await repository.deleteTask('original');
       await repository.saveThemeMode('light');
-      await repository.restoreBackup(decodeBackup(Stream.value(csv)));
+      await repository.restoreBackup(decodeBackup(Stream.value(zip)));
 
       final restored = await repository.loadInitial(pageSize: 10);
       expect(restored.completedPage.tasks.single.id, 'original');
@@ -169,15 +169,16 @@ void main() {
       );
       await repository.addCustomColor(0xFFABCDEF);
 
-      final csv = (await encodeBackup(
-        repository.exportBackupEntries(),
-      ).toList()).join();
-      expect(csv, contains('Original notes'));
+      final zip = await encodeBackup(repository.exportBackupEntries());
+      final tasksFile = ZipDecoder().decodeBytes(
+        zip,
+      ).singleWhere((file) => file.name == 'tasks.csv');
+      expect(utf8.decode(tasksFile.content), contains('Original notes'));
 
       await repository.saveTask(
         Task(id: 'later', name: 'Different', startedAt: DateTime.utc(2026)),
       );
-      await repository.restoreBackup(decodeBackup(Stream.value(csv)));
+      await repository.restoreBackup(decodeBackup(Stream.value(zip)));
 
       final restored = await repository.loadInitial(pageSize: 10);
       expect(restored.runningTasks, isEmpty);
@@ -372,4 +373,91 @@ void main() {
       }
     },
   );
+
+  test('migrates suffix-less local timestamps to UTC in schema v5', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'kronos-utc-migration-',
+    );
+    final databasePath = paths.join(directory.path, 'kronos.db');
+    final oldDatabase = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(
+        version: 4,
+        onCreate: (db, version) async {
+          await db.execute('''
+          CREATE TABLE tasks (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            notes TEXT NOT NULL DEFAULT ''
+          )
+        ''');
+          await db.execute('''
+          CREATE TABLE task_colors (
+            name_key TEXT PRIMARY KEY,
+            argb INTEGER NOT NULL
+          )
+        ''');
+          await db.execute('''
+          CREATE TABLE app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+          )
+        ''');
+          await db.execute('''
+          CREATE TABLE custom_colors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            argb INTEGER NOT NULL UNIQUE
+          )
+        ''');
+        },
+      ),
+    );
+    final legacyStartedAt = DateTime(2026, 6, 1, 12, 34);
+    final legacyEndedAt = legacyStartedAt.add(const Duration(minutes: 26));
+    await oldDatabase.insert('tasks', {
+      'id': 'legacy',
+      'name': 'Planning',
+      'started_at': legacyStartedAt.toIso8601String(),
+      'ended_at': legacyEndedAt.toIso8601String(),
+      'notes': '',
+    });
+    await oldDatabase.close();
+
+    final repository = SqliteTaskRepository(
+      factory: databaseFactoryFfi,
+      databasePath: () async => databasePath,
+    );
+    try {
+      final loaded = await repository.loadInitial(pageSize: 10);
+      final migrated = loaded.completedPage.tasks.single;
+      expect(migrated.startedAt.isUtc, isTrue);
+      expect(migrated.startedAt.toUtc(), legacyStartedAt.toUtc());
+      expect(migrated.endedAt!.toUtc(), legacyEndedAt.toUtc());
+    } finally {
+      await repository.close();
+    }
+
+    final stored = await databaseFactoryFfi.openDatabase(
+      databasePath,
+      options: OpenDatabaseOptions(readOnly: true),
+    );
+    try {
+      final row = (await stored.query(
+        'tasks',
+        where: 'id = ?',
+        whereArgs: ['legacy'],
+      )).single;
+      final startedAt = DateTime.parse(row['started_at']! as String);
+      expect(startedAt.isUtc, isTrue);
+      expect(startedAt, legacyStartedAt.toUtc());
+      final endedAt = DateTime.parse(row['ended_at']! as String);
+      expect(endedAt.isUtc, isTrue);
+      expect(endedAt, legacyEndedAt.toUtc());
+    } finally {
+      await stored.close();
+      await directory.delete(recursive: true);
+    }
+  });
 }

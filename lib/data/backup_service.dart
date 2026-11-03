@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -28,9 +27,9 @@ class BackupService {
     'cc.angius.kronos/backup_directory',
   );
   static const _chunkSize = 64 * 1024;
-  static const _extension = 'csv';
-  static const _mimeType = 'text/csv';
-  static const _automaticBackupFileName = 'kronos-automatic-backup.csv';
+  static const _extension = 'zip';
+  static const _mimeType = 'application/zip';
+  static const _automaticBackupFileName = 'kronos-automatic-backup.zip';
 
   final TaskRepository _repository;
   final _saf = SafStream();
@@ -110,17 +109,14 @@ class BackupService {
     final file = await FilePicker.pickFile();
     if (file == null) return null;
     if (!file.name.toLowerCase().endsWith('.$_extension')) {
-      throw const FormatException('Choose a Kronos CSV backup file.');
+      throw const FormatException('Choose a Kronos ZIP backup file.');
     }
     return file;
   }
 
-  Future<void> importBackup(PlatformFile file) {
-    final Stream<List<int>> bytes = file.readAsByteStream();
-    return _repository.restoreBackup(
-      decodeBackup(bytes.transform(utf8.decoder)),
-    );
-  }
+  Future<void> importBackup(PlatformFile file) => _repository.restoreBackup(
+    decodeBackup(file.readAsByteStream()),
+  );
 
   Future<void> syncSchedule() async {
     final preferences = await loadPreferences();
@@ -184,8 +180,9 @@ class BackupService {
     await _recordBackup(DateTime.now());
   }
 
-  Stream<List<int>> _encodedBackup() =>
-      encodeBackup(_repository.exportBackupEntries()).transform(utf8.encoder);
+  Stream<List<int>> _encodedBackup() async* {
+    yield await encodeBackup(_repository.exportBackupEntries());
+  }
 
   /// Groups small encoded pieces into chunks of about [_chunkSize] bytes so
   /// that each platform call writes a useful amount of data.

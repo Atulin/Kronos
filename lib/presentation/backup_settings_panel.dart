@@ -52,7 +52,7 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
             value: preferences.enabled,
             onChanged: _busy ? null : _setEnabled,
             title: const Text('Automatic backups'),
-            subtitle: const Text('Keep a scheduled CSV backup up to date'),
+            subtitle: const Text('Keep a scheduled ZIP backup up to date'),
             secondary: const Icon(Icons.backup_outlined),
           ),
           if (preferences.enabled) ...[
@@ -128,7 +128,7 @@ class _BackupSettingsPanelState extends State<BackupSettingsPanel> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Text(
-              'CSV backups are not encrypted yet. Android may delay scheduled backups to save battery.',
+              'ZIP backups are not encrypted yet. Android may delay scheduled backups to save battery.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
