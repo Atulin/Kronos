@@ -1,18 +1,53 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kronos/data/notification_service.dart';
 import 'package:kronos/data/task_repository.dart';
 import 'package:kronos/domain/task.dart';
 import 'package:kronos/domain/task_backup.dart';
 import 'package:kronos/domain/task_filter.dart';
+import 'package:kronos/domain/task_reminder.dart';
 import 'package:kronos/presentation/task_view_model.dart';
+
+class _FakeReminderNotifier implements ReminderNotifier {
+  final List<String> events = [];
+  int requestedPermissions = 0;
+  int resyncs = 0;
+
+  @override
+  Future<void> scheduleRunningTask(Task task, TaskReminder reminder) async {
+    events.add('${task.isRunning ? "start" : "cancel"} ${task.id}');
+  }
+
+  @override
+  Future<void> cancelRunningTask(Task task) async {
+    events.add('cancel ${task.id}');
+  }
+
+  @override
+  Future<void> cancelAllPending() async {
+    resyncs++;
+  }
+
+  @override
+  Future<void> requestPermissions() async {
+    requestedPermissions++;
+  }
+
+  @override
+  Future<void> showPreview(TaskReminder reminder) async {
+    events.add('preview ${reminder.sound}');
+  }
+}
 
 void main() {
   late _MemoryTaskRepository repository;
+  late _FakeReminderNotifier notifier;
   late TaskViewModel viewModel;
 
   setUp(() async {
     repository = _MemoryTaskRepository();
-    viewModel = TaskViewModel(repository);
+    notifier = _FakeReminderNotifier();
+    viewModel = TaskViewModel(repository, notifier: notifier);
     await viewModel.load();
   });
 
@@ -113,6 +148,100 @@ void main() {
     expect(restarted.themeMode, ThemeMode.dark);
   });
 
+  test('saves one reminder per task name and re-arms running tasks', () async {
+    await viewModel.startTask('On a break');
+    final task = viewModel.runningTasks.single;
+    notifier.events.clear();
+
+    const reminder = TaskReminder(interval: Duration(minutes: 30));
+    await viewModel.setReminder('ON A BREAK', reminder);
+
+    expect(viewModel.reminderFor('On a break'), reminder);
+    expect(repository.reminders['on a break'], reminder);
+    expect(notifier.events, ['start ${task.id}']);
+    expect(notifier.requestedPermissions, 1);
+
+    notifier.events.clear();
+    await viewModel.setReminder('On a break', null);
+
+    expect(viewModel.reminderFor('on a break'), isNull);
+    expect(repository.reminders.containsKey('on a break'), isFalse);
+    expect(notifier.events, ['cancel ${task.id}']);
+    expect(notifier.requestedPermissions, 1);
+  });
+
+  test(
+    'starts arm reminders by name; stopping and deleting disarm them',
+    () async {
+      repository.reminders['baking'] = const TaskReminder(
+        interval: Duration(minutes: 15),
+        repeats: true,
+      );
+      await viewModel.load();
+
+      await viewModel.startTask('Baking');
+      final task = viewModel.runningTasks.single;
+      expect(notifier.events, ['start ${task.id}']);
+
+      notifier.events.clear();
+      await viewModel.stopTask(task);
+      expect(notifier.events, ['cancel ${task.id}']);
+
+      await viewModel.startTask('Baking');
+      final restarted = viewModel.runningTasks.single;
+      notifier.events.clear();
+      await viewModel.deleteTask(restarted);
+      expect(notifier.events, ['cancel ${restarted.id}']);
+      expect(repository.reminders, containsPair('baking', isNotNull));
+    },
+  );
+
+  test('renaming a task moves its schedule to the new name', () async {
+    await viewModel.startTask('Planning');
+    final task = viewModel.runningTasks.single;
+    await viewModel.setReminder(
+      'planning',
+      const TaskReminder(interval: Duration(minutes: 5)),
+    );
+    notifier.events.clear();
+
+    await viewModel.updateTask(task.copyWith(name: 'Focus'), color: null);
+
+    // No reminder for 'Focus', so the schedule is dropped.
+    expect(notifier.events, ['cancel ${task.id}']);
+
+    await viewModel.setReminder(
+      'focus',
+      const TaskReminder(interval: Duration(minutes: 45)),
+    );
+    expect(notifier.events, ['cancel ${task.id}', 'start ${task.id}']);
+  });
+
+  test('reloading re-arms reminders for currently running tasks', () async {
+    await viewModel.startTask('On a break');
+    repository.reminders['on a break'] = const TaskReminder(
+      interval: Duration(minutes: 30),
+    );
+    notifier.events.clear();
+    notifier.resyncs = 0;
+
+    await viewModel.load();
+
+    expect(notifier.resyncs, 1);
+    expect(notifier.events, ['start ${viewModel.runningTasks.single.id}']);
+  });
+
+  test('previews use the configured reminder sound', () async {
+    const reminder = TaskReminder(
+      interval: Duration(minutes: 10),
+      repeats: true,
+      sound: 'chime',
+    );
+    await viewModel.showReminderPreview(reminder);
+
+    expect(notifier.events, ['preview chime']);
+  });
+
   test('applies completed-task filters without hiding running tasks', () async {
     await viewModel.startTask('Write report');
     await viewModel.stopTask(viewModel.runningTasks.single);
@@ -154,6 +283,7 @@ class _MemoryTaskRepository implements TaskRepository {
   final Map<String, int> colors = {};
   final List<int> customColors = [];
   final Map<String, String> settings = {};
+  final Map<String, TaskReminder> reminders = {};
   String? themeMode;
 
   @override
@@ -174,6 +304,7 @@ class _MemoryTaskRepository implements TaskRepository {
       taskNames: await loadTaskNames(),
       colors: {...colors},
       customColors: [...customColors],
+      reminders: {...reminders},
     );
   }
 
@@ -248,6 +379,16 @@ class _MemoryTaskRepository implements TaskRepository {
   }
 
   @override
+  Future<void> saveReminder(String nameKey, TaskReminder reminder) async {
+    reminders[nameKey] = reminder;
+  }
+
+  @override
+  Future<void> deleteReminder(String nameKey) async {
+    reminders.remove(nameKey);
+  }
+
+  @override
   Stream<BackupEntry> exportBackupEntries() async* {
     yield BackupHeader(DateTime.now());
     for (final task in tasks) {
@@ -258,6 +399,9 @@ class _MemoryTaskRepository implements TaskRepository {
     }
     for (final argb in customColors) {
       yield BackupCustomColorEntry(argb);
+    }
+    for (final entry in reminders.entries) {
+      yield BackupReminderEntry(entry.key, entry.value);
     }
   }
 
@@ -279,6 +423,13 @@ class _MemoryTaskRepository implements TaskRepository {
     customColors
       ..clear()
       ..addAll(restored.whereType<BackupCustomColorEntry>().map((e) => e.argb));
+    reminders
+      ..clear()
+      ..addEntries(
+        restored.whereType<BackupReminderEntry>().map(
+          (entry) => MapEntry(entry.key, entry.reminder),
+        ),
+      );
   }
 
   @override

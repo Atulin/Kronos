@@ -6,6 +6,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import '../data/backup_service.dart';
 import '../domain/task.dart';
 import '../domain/task_filter.dart';
+import '../domain/task_reminder.dart';
 import 'analytics_page.dart';
 import 'search_filter_sheet.dart';
 import 'settings_page.dart';
@@ -202,6 +203,7 @@ class _HomePageState extends State<HomePage> {
                 focusNode: _focus,
                 runningTasks: running,
                 colorFor: widget.viewModel.colorFor,
+                reminderFor: widget.viewModel.reminderFor,
                 now: widget.viewModel.now,
                 onStop: widget.viewModel.stopTask,
                 onOpen: (task) => _openDetails(context, task),
@@ -271,6 +273,7 @@ class _RunningTaskTile extends StatelessWidget {
   const _RunningTaskTile({
     required this.task,
     required this.color,
+    required this.hasReminder,
     required this.onStop,
     required this.onTap,
     required this.onDelete,
@@ -279,6 +282,7 @@ class _RunningTaskTile extends StatelessWidget {
 
   final Task task;
   final Color? color;
+  final bool hasReminder;
   final VoidCallback onStop;
   final VoidCallback onTap;
   final VoidCallback onDelete;
@@ -298,6 +302,14 @@ class _RunningTaskTile extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
           ),
+          if (hasReminder) ...[
+            Icon(
+              Icons.notifications_active_outlined,
+              size: 15,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 5),
+          ],
           Text(
             _duration(task.durationAt(now)),
             style: const TextStyle(
@@ -451,6 +463,7 @@ class _AddTaskPanel extends StatelessWidget {
     required this.focusNode,
     required this.runningTasks,
     required this.colorFor,
+    required this.reminderFor,
     required this.now,
     required this.onStop,
     required this.onOpen,
@@ -464,6 +477,7 @@ class _AddTaskPanel extends StatelessWidget {
   final FocusNode focusNode;
   final List<Task> runningTasks;
   final Color? Function(String name) colorFor;
+  final TaskReminder? Function(String name) reminderFor;
   final DateTime now;
   final ValueChanged<Task> onStop;
   final ValueChanged<Task> onOpen;
@@ -502,6 +516,7 @@ class _AddTaskPanel extends StatelessWidget {
                         _RunningTaskTile(
                           task: task,
                           color: colorFor(task.name),
+                          hasReminder: reminderFor(task.name) != null,
                           now: now,
                           onStop: () => onStop(task),
                           onTap: () => onOpen(task),

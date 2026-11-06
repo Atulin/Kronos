@@ -5,6 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:csv/csv.dart';
 
 import 'task.dart';
+import 'task_reminder.dart';
 
 /// Version of the backup layout.
 ///
@@ -42,14 +43,23 @@ final class BackupCustomColorEntry extends BackupEntry {
   final int argb;
 }
 
+final class BackupReminderEntry extends BackupEntry {
+  const BackupReminderEntry(this.key, this.reminder);
+
+  final String key;
+  final TaskReminder reminder;
+}
+
 const _backupFileName = 'backup.csv';
 const _tasksFileName = 'tasks.csv';
 const _colorsFileName = 'task_colors.csv';
 const _customColorsFileName = 'custom_colors.csv';
+const _remindersFileName = 'task_reminders.csv';
 
 const _tasksColumns = ['id', 'name', 'started_at', 'ended_at', 'notes'];
 const _colorsColumns = ['name_key', 'argb'];
 const _customColorsColumns = ['argb'];
+const _remindersColumns = ['name_key', 'minutes', 'repeats', 'sound'];
 const _backupColumns = ['format_version', 'exported_at'];
 const _eol = '\r\n';
 
@@ -63,6 +73,7 @@ Future<Uint8List> encodeBackup(Stream<BackupEntry> entries) async {
   final tasks = <Task>[];
   final colors = <BackupColorEntry>[];
   final customColors = <BackupCustomColorEntry>[];
+  final reminders = <BackupReminderEntry>[];
 
   await for (final entry in entries) {
     switch (entry) {
@@ -74,52 +85,54 @@ Future<Uint8List> encodeBackup(Stream<BackupEntry> entries) async {
         colors.add(BackupColorEntry(key, argb));
       case BackupCustomColorEntry(:final argb):
         customColors.add(BackupCustomColorEntry(argb));
+      case BackupReminderEntry(:final key, :final reminder):
+        reminders.add(BackupReminderEntry(key, reminder));
     }
   }
 
   final zip = Archive()
     ..addFile(
-      _csvFile(
-        _backupFileName,
-        [
-          _backupColumns,
-          [backupFormatVersion, exportedAt.toUtc().toIso8601String()],
-        ],
-      ),
+      _csvFile(_backupFileName, [
+        _backupColumns,
+        [backupFormatVersion, exportedAt.toUtc().toIso8601String()],
+      ]),
     )
     ..addFile(
-      _csvFile(
-        _tasksFileName,
-        [
-          _tasksColumns,
-          for (final task in tasks)
-            [
-              task.id,
-              task.name,
-              task.startedAt.toUtc().toIso8601String(),
-              task.endedAt?.toUtc().toIso8601String() ?? '',
-              task.notes,
-            ],
-        ],
-      ),
+      _csvFile(_tasksFileName, [
+        _tasksColumns,
+        for (final task in tasks)
+          [
+            task.id,
+            task.name,
+            task.startedAt.toUtc().toIso8601String(),
+            task.endedAt?.toUtc().toIso8601String() ?? '',
+            task.notes,
+          ],
+      ]),
     )
     ..addFile(
-      _csvFile(
-        _colorsFileName,
-        [
-          _colorsColumns,
-          for (final color in colors) [color.key, color.argb],
-        ],
-      ),
+      _csvFile(_colorsFileName, [
+        _colorsColumns,
+        for (final color in colors) [color.key, color.argb],
+      ]),
     )
     ..addFile(
-      _csvFile(
-        _customColorsFileName,
-        [
-          _customColorsColumns,
-          for (final color in customColors) [color.argb],
-        ],
-      ),
+      _csvFile(_customColorsFileName, [
+        _customColorsColumns,
+        for (final color in customColors) [color.argb],
+      ]),
+    )
+    ..addFile(
+      _csvFile(_remindersFileName, [
+        _remindersColumns,
+        for (final reminder in reminders)
+          [
+            reminder.key,
+            reminder.reminder.minutes,
+            reminder.reminder.repeats ? 1 : 0,
+            reminder.reminder.sound,
+          ],
+      ]),
     );
 
   return ZipEncoder().encodeBytes(zip);
@@ -168,6 +181,17 @@ Stream<BackupEntry> decodeBackup(Stream<List<int>> bytes) async* {
     }
     yield BackupCustomColorEntry(_argb(row[0]));
   }
+  // Reminders were added after format version 2; older backups legitimately
+  // have no section for them.
+  final reminderRows = files[_remindersFileName] == null
+      ? const <List<String>>[]
+      : await _rowsOf(files, _remindersFileName, _remindersColumns);
+  for (final row in reminderRows) {
+    yield BackupReminderEntry(
+      _reminderKey(row[0]),
+      _reminder(row[1], row[2], row[3]),
+    );
+  }
 }
 
 ArchiveFile _csvFile(String name, List<List<Object?>> rows) =>
@@ -194,8 +218,9 @@ Future<List<List<String>>> _rowsOf(
   return [for (final row in rows.skip(1)) _stringRow(row)];
 }
 
-List<String> _stringRow(List<dynamic> fields) =>
-    [for (final field in fields) '$field'];
+List<String> _stringRow(List<dynamic> fields) => [
+  for (final field in fields) '$field',
+];
 
 bool _sameColumns(List<String> actual, List<String> expected) {
   if (actual.length != expected.length) return false;
@@ -241,4 +266,30 @@ int _argb(String value) {
     throw const FormatException('Backup contains an invalid color.');
   }
   return argb;
+}
+
+String _reminderKey(String value) {
+  if (value.isEmpty) {
+    throw const FormatException('Backup contains an invalid task reminder.');
+  }
+  return value;
+}
+
+TaskReminder _reminder(String minutesField, String repeatsField, String sound) {
+  final minutes = int.tryParse(minutesField);
+  final repeats = switch (repeatsField) {
+    '0' => false,
+    '1' => true,
+    _ => throw const FormatException(
+      'Backup contains an invalid task reminder.',
+    ),
+  };
+  if (minutes == null || minutes < 1 || minutes > 525600) {
+    throw const FormatException('Backup contains an invalid task reminder.');
+  }
+  return TaskReminder(
+    interval: Duration(minutes: minutes),
+    repeats: repeats,
+    sound: sound,
+  );
 }

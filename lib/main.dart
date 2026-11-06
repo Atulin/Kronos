@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'data/backup_service.dart';
+import 'data/notification_service.dart';
 import 'data/backup_worker.dart';
 import 'data/task_repository.dart';
 import 'presentation/kronos_app.dart';
@@ -15,7 +16,7 @@ Future<void> main() async {
   final backupService = BackupService(repository);
   runApp(
     KronosApp(
-      viewModel: TaskViewModel(repository),
+      viewModel: TaskViewModel(repository, notifier: LocalReminderNotifier()),
       backupService: backupService,
     ),
   );

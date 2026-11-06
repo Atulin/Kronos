@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Task timer reminders: schedule after reboots and keep exact timing
+         when the user allows it (falls back to inexact alarms otherwise).
+         POST_NOTIFICATIONS and VIBRATE come from flutter_local_notifications. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <application
         android:label="kronos"
         android:name="${applicationName}"

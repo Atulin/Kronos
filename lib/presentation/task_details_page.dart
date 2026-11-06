@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 
 import '../domain/task.dart';
+import '../domain/task_reminder.dart';
 import 'date_time_wheel_picker.dart';
 import 'task_view_model.dart';
 
@@ -26,6 +28,11 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
   Color? _color;
   bool _saving = false;
 
+  // The reminder is identified like a color: by the task's name.
+  late String _reminderMode; // 'off' | 'once' | 'repeat'
+  late final TextEditingController _minutes;
+  late String _reminderSound;
+
   @override
   void initState() {
     super.initState();
@@ -34,12 +41,25 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
     _start = widget.task.startedAt.toLocal();
     _end = widget.task.endedAt?.toLocal();
     _color = widget.viewModel.colorFor(widget.task.name);
+    final reminder = widget.viewModel.reminderFor(widget.task.name);
+    _reminderMode = switch (reminder) {
+      null => 'off',
+      TaskReminder(repeats: true) => 'repeat',
+      TaskReminder() => 'once',
+    };
+    _minutes = TextEditingController(
+      text: reminder?.minutes.toString() ?? '30',
+    );
+    _reminderSound = reminder?.sound ?? defaultReminderSound;
+    // Keep the reminder note in step while the task is renamed.
+    _name.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
     _name.dispose();
     _notes.dispose();
+    _minutes.dispose();
     super.dispose();
   }
 
@@ -68,10 +88,32 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
     }
   }
 
+  /// Returns the reminder to save, or `null` for 'off'; throws when the
+  /// minute input is unusable.
+  TaskReminder? _pendingReminder() {
+    if (_reminderMode == 'off') return null;
+    final minutes = int.tryParse(_minutes.text.trim());
+    if (minutes == null || minutes < 1 || minutes > 525600) {
+      throw FormatException('Enter a timer between 1 and 525,600 minutes.');
+    }
+    return TaskReminder(
+      interval: Duration(minutes: minutes),
+      repeats: _reminderMode == 'repeat',
+      sound: _reminderSound,
+    );
+  }
+
   Future<void> _save() async {
     final name = _name.text.trim();
     if (name.isEmpty) {
       _showMessage('Enter a task name.');
+      return;
+    }
+    final TaskReminder? reminder;
+    try {
+      reminder = _pendingReminder();
+    } on FormatException catch (error) {
+      _showMessage(error.message);
       return;
     }
     setState(() => _saving = true);
@@ -83,6 +125,7 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
       clearEndedAt: _end == null,
     );
     await widget.viewModel.updateTask(updated, color: _color);
+    await widget.viewModel.setReminder(name, reminder);
     if (mounted) Navigator.pop(context);
   }
 
@@ -251,6 +294,91 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
               ),
             ],
           ),
+          const SizedBox(height: 26),
+          Text('REMINDER', style: _eyebrow(context)),
+          const SizedBox(height: 8),
+          Text(
+            'Applies to every task named “${_name.text.trim()}”. '
+            'Fires a notification with the chosen sound while a task runs.',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SegmentedButton<String>(
+            key: const Key('reminder-mode'),
+            segments: const [
+              ButtonSegment(
+                value: 'off',
+                label: Text('Off'),
+                icon: Icon(Icons.timer_off_outlined, size: 18),
+              ),
+              ButtonSegment(
+                value: 'once',
+                label: Text('Once'),
+                icon: Icon(Icons.notifications_outlined, size: 18),
+              ),
+              ButtonSegment(
+                value: 'repeat',
+                label: Text('Repeat'),
+                icon: Icon(Icons.repeat_rounded, size: 18),
+              ),
+            ],
+            selected: {_reminderMode},
+            onSelectionChanged: (selection) =>
+                setState(() => _reminderMode = selection.first),
+          ),
+          const SizedBox(height: 12),
+          if (_reminderMode != 'off') ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 100,
+                  child: TextField(
+                    key: const Key('reminder-minutes'),
+                    controller: _minutes,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                      labelText: 'Minutes',
+                      border: OutlineInputBorder(),
+                      helperText: ' ',
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _reminderSound,
+                    decoration: const InputDecoration(
+                      labelText: 'Sound',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      for (final sound in reminderSounds)
+                        DropdownMenuItem(
+                          value: sound.key,
+                          child: Text(sound.label),
+                        ),
+                    ],
+                    onChanged: (sound) =>
+                        setState(() => _reminderSound = sound!),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _previewReminder,
+                icon: const Icon(Icons.hearing_outlined, size: 18),
+                label: const Text('Preview sound'),
+              ),
+            ),
+          ],
           const SizedBox(height: 40),
           OutlinedButton.icon(
             onPressed: () => _delete(context),
@@ -358,6 +486,17 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
       );
+
+  void _previewReminder() {
+    final TaskReminder? reminder;
+    try {
+      reminder = _pendingReminder();
+    } on FormatException {
+      _showMessage('Enter a timer of at least 1 minute first.');
+      return;
+    }
+    if (reminder != null) widget.viewModel.showReminderPreview(reminder);
+  }
 }
 
 class _DateTimeRow extends StatelessWidget {

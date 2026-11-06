@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keeps the reminder sound files from being stripped when resources are
+     shrunk for release builds. Launcher icons are referenced by the manifest
+     and therefore kept automatically. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/kronos_bell,@raw/kronos_chime,@raw/kronos_ping,@raw/kronos_sweep" />

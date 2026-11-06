@@ -2,12 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../data/notification_service.dart';
 import '../data/task_repository.dart';
 import '../domain/task.dart';
 import '../domain/task_filter.dart';
+import '../domain/task_reminder.dart';
 
 class TaskViewModel extends ChangeNotifier {
-  TaskViewModel(this._repository) {
+  /// Notify only through `main.dart`; tests build offline-safe view models.
+  TaskViewModel(this._repository, {ReminderNotifier? notifier})
+    : _notifier = notifier ?? const NoopReminderNotifier() {
     _clock = Timer.periodic(
       const Duration(seconds: 1),
       (_) => notifyListeners(),
@@ -17,12 +21,14 @@ class TaskViewModel extends ChangeNotifier {
   static const pageSize = 75;
 
   final TaskRepository _repository;
+  final ReminderNotifier _notifier;
   late final Timer _clock;
   List<Task> _runningTasks = [];
   List<Task> _completedTasks = [];
   List<String> _taskNames = [];
   Map<String, int> _colors = {};
   List<int> _customColors = [];
+  Map<String, TaskReminder> _reminders = {};
   TaskCursor? _completedCursor;
   TaskFilter _filter = const TaskFilter();
   ThemeMode _themeMode = ThemeMode.system;
@@ -64,6 +70,59 @@ class TaskViewModel extends ChangeNotifier {
     return stored == null ? null : Color(stored);
   }
 
+  /// Reminder that applies to every task named like [name].
+  TaskReminder? reminderFor(String name) => _reminders[taskColorKey(name)];
+
+  /// Shares one reminder between all tasks named alike, like colors.
+  Future<void> setReminder(String name, TaskReminder? reminder) async {
+    final key = taskColorKey(name);
+    if (_reminders[key] == reminder) return;
+    if (reminder != null) await _notifier.requestPermissions();
+    if (reminder == null) {
+      _reminders.remove(key);
+    } else {
+      _reminders[key] = reminder;
+    }
+    notifyListeners();
+    if (reminder == null) {
+      await _repository.deleteReminder(key);
+    } else {
+      await _repository.saveReminder(key, reminder);
+    }
+    for (final task in _runningTasks.where(
+      (task) => taskColorKey(task.name) == key,
+    )) {
+      await _syncReminder(task);
+    }
+  }
+
+  /// Shows an example notification with [reminder]'s sound.
+  Future<void> showReminderPreview(TaskReminder reminder) =>
+      _notifier.showPreview(reminder);
+
+  /// Keeps a running task's notification in step with its reminder; a task
+  /// that finished or has no reminder only needs its schedule cleared.
+  Future<void> _syncReminder(Task task) async {
+    final reminder = _reminders[taskColorKey(task.name)];
+    if (task.isRunning && reminder != null) {
+      await _notifier.scheduleRunningTask(task, reminder);
+    } else {
+      await _notifier.cancelRunningTask(task);
+    }
+  }
+
+  /// Re-arms reminders for all running tasks after a clean slate, typically
+  /// on load and after backups are restored.
+  Future<void> _resyncReminders() async {
+    await _notifier.cancelAllPending();
+    for (final task in _runningTasks) {
+      final reminder = _reminders[taskColorKey(task.name)];
+      if (reminder != null) {
+        await _notifier.scheduleRunningTask(task, reminder);
+      }
+    }
+  }
+
   Stream<Task> streamAnalyticsTasks(String name, {DateTime? startedBefore}) =>
       _repository.streamTasksNamed(name, startedBefore: startedBefore);
 
@@ -80,9 +139,11 @@ class TaskViewModel extends ChangeNotifier {
     _taskNames = data.taskNames;
     _colors = data.colors;
     _customColors = data.customColors;
+    _reminders = data.reminders;
     _themeMode = _themeModeFromName(savedThemeMode);
     _isLoaded = true;
     notifyListeners();
+    await _resyncReminders();
   }
 
   Future<void> loadMoreCompleted() async {
@@ -178,6 +239,7 @@ class TaskViewModel extends ChangeNotifier {
     _runningTasks = [..._runningTasks, task]..sort(_compareRunning);
     if (existingName == null) _taskNames = [..._taskNames, cleanName];
     await _persistTask(task);
+    await _syncReminder(task);
   }
 
   Future<void> stopTask(Task task) async {
@@ -185,9 +247,11 @@ class TaskViewModel extends ChangeNotifier {
     _runningTasks = _runningTasks.where((item) => item.id != task.id).toList();
     _insertCompleted(stopped);
     await _persistTask(stopped);
+    await _notifier.cancelRunningTask(task);
   }
 
   Future<void> deleteTask(Task task) async {
+    await _notifier.cancelRunningTask(task);
     _runningTasks = _runningTasks.where((item) => item.id != task.id).toList();
     _completedTasks = _completedTasks
         .where((item) => item.id != task.id)
@@ -228,6 +292,7 @@ class TaskViewModel extends ChangeNotifier {
     );
     _taskNames = await _repository.loadTaskNames();
     notifyListeners();
+    await _syncReminder(savedTask);
   }
 
   void _insertCompleted(Task task) {

@@ -5,6 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kronos/domain/task.dart';
 import 'package:kronos/domain/task_backup.dart';
+import 'package:kronos/domain/task_reminder.dart';
 
 Future<Uint8List> _encode(List<BackupEntry> entries) =>
     encodeBackup(Stream.fromIterable(entries));
@@ -76,6 +77,7 @@ void main() {
       'tasks.csv',
       'task_colors.csv',
       'custom_colors.csv',
+      'task_reminders.csv',
     ]);
     expect(files['backup.csv']!.split('\r\n'), [
       'format_version,exported_at',
@@ -95,6 +97,82 @@ void main() {
       '${0xFFABCDEF}',
       '',
     ]);
+  });
+
+  test('round-trips reminders and accepts backups that predate them', () async {
+    const reminder = TaskReminder(
+      interval: Duration(minutes: 30),
+      repeats: true,
+      sound: 'bell',
+    );
+    final zip = await _encode([
+      BackupHeader(DateTime.utc(2026)),
+      const BackupReminderEntry('on_a_break', reminder),
+    ]);
+    final files = _fileContents(zip);
+    expect(files['task_reminders.csv']!.split('\r\n'), [
+      'name_key,minutes,repeats,sound',
+      'on_a_break,30,1,bell',
+      '',
+    ]);
+
+    final decoded = await _decode(zip);
+    final entry = decoded[1] as BackupReminderEntry;
+    expect(entry.key, 'on_a_break');
+    expect(entry.reminder, reminder);
+
+    // Backups from before reminders existed keep importing cleanly.
+    final legacy = ZipEncoder().encodeBytes(
+      _zipOf([
+        _file('backup.csv', _metadata),
+        _file('tasks.csv', 'id,name,started_at,ended_at,notes\r\n'),
+        _file('task_colors.csv', 'name_key,argb\r\n'),
+        _file('custom_colors.csv', 'argb\r\n'),
+      ]),
+    );
+    final legacyDecoded = await _decode(legacy);
+    expect(legacyDecoded.whereType<BackupReminderEntry>(), isEmpty);
+  });
+
+  test('rejects malformed reminder rows', () async {
+    final base = [
+      _file('backup.csv', _metadata),
+      _file('tasks.csv', 'id,name,started_at,ended_at,notes\r\n'),
+      _file('task_colors.csv', 'name_key,argb\r\n'),
+      _file('custom_colors.csv', 'argb\r\n'),
+    ];
+    final badMinutes = ZipEncoder().encodeBytes(
+      _zipOf([
+        ...base,
+        _file(
+          'task_reminders.csv',
+          'name_key,minutes,repeats,sound\r\nplanning,0,0,default\r\n',
+        ),
+      ]),
+    );
+    expectLater(_decode(badMinutes), throwsFormatException);
+
+    final badRepeats = ZipEncoder().encodeBytes(
+      _zipOf([
+        ...base,
+        _file(
+          'task_reminders.csv',
+          'name_key,minutes,repeats,sound\r\nplanning,30,2,bell\r\n',
+        ),
+      ]),
+    );
+    expectLater(_decode(badRepeats), throwsFormatException);
+
+    final badEmptyKey = ZipEncoder().encodeBytes(
+      _zipOf([
+        ...base,
+        _file(
+          'task_reminders.csv',
+          'name_key,minutes,repeats,sound\r\n,30,0,default\r\n',
+        ),
+      ]),
+    );
+    expectLater(_decode(badEmptyKey), throwsFormatException);
   });
 
   test('omits per-row types and #-directives entirely', () async {
@@ -134,9 +212,9 @@ void main() {
         ),
     ]);
 
-    final tasks = (await _decode(zip)).whereType<BackupTaskEntry>().map(
-      (entry) => entry.task,
-    ).toList();
+    final tasks = (await _decode(
+      zip,
+    )).whereType<BackupTaskEntry>().map((entry) => entry.task).toList();
 
     expect(tasks.map((task) => task.name), names);
     expect(tasks.first.notes, 'Notes, with "quotes"\nand a newline');
@@ -192,7 +270,8 @@ void main() {
   });
 
   test('rejects an unsupported version', () async {
-    const versionRow = 'format_version,exported_at\r\n'
+    const versionRow =
+        'format_version,exported_at\r\n'
         '3,2026-01-01T00:00:00.000Z\r\n';
     final zip = ZipEncoder().encodeBytes(
       _zipOf([_file('backup.csv', versionRow)]),

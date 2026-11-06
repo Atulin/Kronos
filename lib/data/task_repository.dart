@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import '../domain/task.dart';
 import '../domain/task_backup.dart';
 import '../domain/task_filter.dart';
+import '../domain/task_reminder.dart';
 
 class TaskCursor {
   const TaskCursor({required this.startedAt, required this.id});
@@ -27,6 +28,7 @@ class InitialTaskData {
     required this.taskNames,
     required this.colors,
     required this.customColors,
+    required this.reminders,
   });
 
   final List<Task> runningTasks;
@@ -34,6 +36,9 @@ class InitialTaskData {
   final List<String> taskNames;
   final Map<String, int> colors;
   final List<int> customColors;
+
+  /// Reminder settings keyed by [taskColorKey].
+  final Map<String, TaskReminder> reminders;
 }
 
 abstract interface class TaskRepository {
@@ -54,6 +59,8 @@ abstract interface class TaskRepository {
   Future<void> deleteSetting(String key);
   Future<List<int>> loadCustomColors();
   Future<void> addCustomColor(int argb);
+  Future<void> saveReminder(String nameKey, TaskReminder reminder);
+  Future<void> deleteReminder(String nameKey);
   Stream<BackupEntry> exportBackupEntries();
   Future<void> restoreBackup(Stream<BackupEntry> entries);
   Future<void> saveTask(
@@ -85,7 +92,7 @@ class SqliteTaskRepository implements TaskRepository {
     return _databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE tasks (
@@ -112,6 +119,7 @@ class SqliteTaskRepository implements TaskRepository {
           await _createSettingsTable(db);
           await _createCustomColorsTable(db);
           await _createAnalyticsIndexes(db);
+          await _createRemindersTable(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -129,6 +137,9 @@ class SqliteTaskRepository implements TaskRepository {
           }
           if (oldVersion < 5) {
             await _migrateTimestampsToUtc(db);
+          }
+          if (oldVersion < 6) {
+            await _createRemindersTable(db);
           }
         },
       ),
@@ -171,6 +182,17 @@ class SqliteTaskRepository implements TaskRepository {
     );
   }
 
+  static Future<void> _createRemindersTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS task_reminders (
+        name_key TEXT PRIMARY KEY,
+        minutes INTEGER NOT NULL,
+        repeats INTEGER NOT NULL,
+        sound TEXT NOT NULL
+      )
+    ''');
+  }
+
   static Future<String> _defaultDatabasePath() async {
     final directory = await getDatabasesPath();
     return paths.join(directory, _databaseName);
@@ -192,12 +214,14 @@ class SqliteTaskRepository implements TaskRepository {
       db.query('task_colors'),
       loadTaskNames(),
       loadCustomColors(),
+      loadReminders(),
     ]);
     final runningRows = results[0] as List<Map<String, Object?>>;
     final completedPage = results[1] as TaskPage;
     final colorRows = results[2] as List<Map<String, Object?>>;
     final taskNames = results[3] as List<String>;
     final customColors = results[4] as List<int>;
+    final reminders = results[5] as Map<String, TaskReminder>;
     final runningTasks = runningRows.map(_taskFromRow).toList();
     final colors = {
       for (final row in colorRows)
@@ -209,6 +233,7 @@ class SqliteTaskRepository implements TaskRepository {
       taskNames: taskNames,
       colors: colors,
       customColors: customColors,
+      reminders: reminders,
     );
   }
 
@@ -329,6 +354,42 @@ class SqliteTaskRepository implements TaskRepository {
     }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
+  Future<Map<String, TaskReminder>> loadReminders() async {
+    final db = await _db;
+    final rows = await db.query('task_reminders', orderBy: 'name_key ASC');
+    return {
+      for (final row in rows) row['name_key']! as String: _reminderFromRow(row),
+    };
+  }
+
+  @override
+  Future<void> saveReminder(String nameKey, TaskReminder reminder) async {
+    final db = await _db;
+    await db.insert('task_reminders', {
+      'name_key': nameKey,
+      'minutes': reminder.minutes,
+      'repeats': reminder.repeats ? 1 : 0,
+      'sound': reminder.sound,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  @override
+  Future<void> deleteReminder(String nameKey) async {
+    final db = await _db;
+    await db.delete(
+      'task_reminders',
+      where: 'name_key = ?',
+      whereArgs: [nameKey],
+    );
+  }
+
+  static TaskReminder _reminderFromRow(Map<String, Object?> row) =>
+      TaskReminder(
+        interval: Duration(minutes: row['minutes']! as int),
+        repeats: row['repeats']! as int != 0,
+        sound: row['sound']! as String,
+      );
+
   @override
   Stream<BackupEntry> exportBackupEntries() async* {
     final db = await _db;
@@ -357,6 +418,15 @@ class SqliteTaskRepository implements TaskRepository {
     for (final row in customColorRows) {
       yield BackupCustomColorEntry(row['argb']! as int);
     }
+    for (final row in await db.query(
+      'task_reminders',
+      orderBy: 'name_key ASC',
+    )) {
+      yield BackupReminderEntry(
+        row['name_key']! as String,
+        _reminderFromRow(row),
+      );
+    }
   }
 
   @override
@@ -367,6 +437,7 @@ class SqliteTaskRepository implements TaskRepository {
         await transaction.delete('tasks');
         await transaction.delete('task_colors');
         await transaction.delete('custom_colors');
+        await transaction.delete('task_reminders');
         await for (final entry in entries) {
           switch (entry) {
             case BackupHeader():
@@ -388,6 +459,13 @@ class SqliteTaskRepository implements TaskRepository {
               });
             case BackupCustomColorEntry(:final argb):
               await transaction.insert('custom_colors', {'argb': argb});
+            case BackupReminderEntry(:final key, :final reminder):
+              await transaction.insert('task_reminders', {
+                'name_key': key,
+                'minutes': reminder.minutes,
+                'repeats': reminder.repeats ? 1 : 0,
+                'sound': reminder.sound,
+              });
           }
         }
       });

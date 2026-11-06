@@ -7,6 +7,7 @@ import 'package:kronos/data/task_repository.dart';
 import 'package:kronos/domain/task.dart';
 import 'package:kronos/domain/task_backup.dart';
 import 'package:kronos/domain/task_filter.dart';
+import 'package:kronos/domain/task_reminder.dart';
 import 'package:path/path.dart' as paths;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -55,6 +56,19 @@ void main() {
       expect(initial.taskNames, containsAll(['Planning', 'Review']));
       expect(initial.colors['planning'], 0xFF123456);
       expect(initial.customColors, [0xFFAB12CD]);
+      expect(initial.reminders, isEmpty);
+
+      const reminder = TaskReminder(
+        interval: Duration(minutes: 30),
+        repeats: true,
+        sound: 'bell',
+      );
+      await repository.saveReminder('planning', reminder);
+      expect((await repository.loadInitial(pageSize: 50)).reminders, {
+        'planning': reminder,
+      });
+      await repository.deleteReminder('planning');
+      expect((await repository.loadInitial(pageSize: 50)).reminders, isEmpty);
 
       final loaded = [...initial.completedPage.tasks];
       var page = initial.completedPage;
@@ -129,6 +143,10 @@ void main() {
         colorValue: 0xFF123456,
       );
       await repository.addCustomColor(0xFFABCDEF);
+      await repository.saveReminder(
+        'planning',
+        const TaskReminder(interval: Duration(minutes: 30)),
+      );
       await repository.saveThemeMode('dark');
       await repository.saveSetting('automatic_backups_enabled', 'true');
 
@@ -142,6 +160,9 @@ void main() {
       expect(restored.completedPage.tasks.single.notes, 'Original notes');
       expect(restored.colors['planning'], 0xFF123456);
       expect(restored.customColors, [0xFFABCDEF]);
+      expect(restored.reminders, {
+        'planning': const TaskReminder(interval: Duration(minutes: 30)),
+      });
       expect(await repository.loadThemeMode(), 'light');
       expect(await repository.loadSetting('automatic_backups_enabled'), 'true');
     },
@@ -170,9 +191,9 @@ void main() {
       await repository.addCustomColor(0xFFABCDEF);
 
       final zip = await encodeBackup(repository.exportBackupEntries());
-      final tasksFile = ZipDecoder().decodeBytes(
-        zip,
-      ).singleWhere((file) => file.name == 'tasks.csv');
+      final tasksFile = ZipDecoder()
+          .decodeBytes(zip)
+          .singleWhere((file) => file.name == 'tasks.csv');
       expect(utf8.decode(tasksFile.content), contains('Original notes'));
 
       await repository.saveTask(

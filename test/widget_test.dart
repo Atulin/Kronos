@@ -5,6 +5,7 @@ import 'package:kronos/data/task_repository.dart';
 import 'package:kronos/domain/task.dart';
 import 'package:kronos/domain/task_backup.dart';
 import 'package:kronos/domain/task_filter.dart';
+import 'package:kronos/domain/task_reminder.dart';
 import 'package:kronos/presentation/duration_bar_chart.dart';
 import 'package:kronos/presentation/kronos_app.dart';
 import 'package:kronos/presentation/task_view_model.dart';
@@ -308,6 +309,41 @@ void main() {
     expect(repository._tasks.single.notes, 'First line\nSecond line');
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('task details set a repeating reminder for the name', (
+    tester,
+  ) async {
+    final repository = _MemoryTaskRepository();
+    final viewModel = TaskViewModel(repository);
+    await viewModel.startTask('On a break');
+    await tester.pumpWidget(KronosApp(viewModel: viewModel));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.text('On a break'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView).last, const Offset(0, -800));
+    await tester.pumpAndSettle();
+
+    expect(find.text('REMINDER'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Applies to every task named “On a break”. '
+        'Fires a notification with the chosen sound while a task runs.',
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Repeat'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('reminder-minutes')), '15');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(
+      viewModel.reminderFor('on a break'),
+      const TaskReminder(interval: Duration(minutes: 15), repeats: true),
+    );
+  });
 }
 
 class _MemoryTaskRepository implements TaskRepository {
@@ -315,6 +351,7 @@ class _MemoryTaskRepository implements TaskRepository {
   final Map<String, int> _colors = {};
   final List<int> _customColors = [];
   final Map<String, String> _settings = {};
+  final Map<String, TaskReminder> _reminders = {};
   String? themeMode;
 
   @override
@@ -338,6 +375,7 @@ class _MemoryTaskRepository implements TaskRepository {
       taskNames: await loadTaskNames(),
       colors: {..._colors},
       customColors: [..._customColors],
+      reminders: {..._reminders},
     );
   }
 
@@ -417,6 +455,16 @@ class _MemoryTaskRepository implements TaskRepository {
   }
 
   @override
+  Future<void> saveReminder(String nameKey, TaskReminder reminder) async {
+    _reminders[nameKey] = reminder;
+  }
+
+  @override
+  Future<void> deleteReminder(String nameKey) async {
+    _reminders.remove(nameKey);
+  }
+
+  @override
   Stream<BackupEntry> exportBackupEntries() async* {
     yield BackupHeader(DateTime.now());
     for (final task in _tasks) {
@@ -427,6 +475,9 @@ class _MemoryTaskRepository implements TaskRepository {
     }
     for (final argb in _customColors) {
       yield BackupCustomColorEntry(argb);
+    }
+    for (final entry in _reminders.entries) {
+      yield BackupReminderEntry(entry.key, entry.value);
     }
   }
 
@@ -448,6 +499,13 @@ class _MemoryTaskRepository implements TaskRepository {
     _customColors
       ..clear()
       ..addAll(restored.whereType<BackupCustomColorEntry>().map((e) => e.argb));
+    _reminders
+      ..clear()
+      ..addEntries(
+        restored.whereType<BackupReminderEntry>().map(
+          (entry) => MapEntry(entry.key, entry.reminder),
+        ),
+      );
   }
 
   @override
