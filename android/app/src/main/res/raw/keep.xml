@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Keeps the reminder sound files from being stripped when resources are
-     shrunk for release builds. Launcher icons are referenced by the manifest
-     and therefore kept automatically. -->
+     shrunk for release builds. The notification small icon is resolved by
+     name at runtime (drawables can't use the manifest mipmap), so it needs
+     an explicit keep too. -->
 <resources xmlns:tools="http://schemas.android.com/tools"
-    tools:keep="@raw/kronos_bell,@raw/kronos_chime,@raw/kronos_ping,@raw/kronos_sweep" />
+    tools:keep="@raw/kronos_bell,@raw/kronos_chime,@raw/kronos_ping,@raw/kronos_sweep,@drawable/ic_kronos_notification" />

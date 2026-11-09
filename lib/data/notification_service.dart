@@ -21,7 +21,8 @@ abstract interface class ReminderNotifier {
   /// Clears every pending reminder; used when re-syncing, typically on load.
   Future<void> cancelAllPending();
 
-  /// Asks the user for permission to show notifications.
+  /// Asks the user for permission to show notifications. A no-op before
+  /// Android 13, where notifications are allowed by default.
   Future<void> requestPermissions();
 
   /// Immediately shows an example notification with the reminder's sound.
@@ -57,10 +58,11 @@ class LocalReminderNotifier implements ReminderNotifier {
       tzdata.initializeTimeZones();
       tz.setLocalLocation(tz.getLocation(timezone.identifier));
       final plugin = _plugin ??= FlutterLocalNotificationsPlugin();
-      // The launcher icon doubles as the small icon on Android.
+      // AndroidNotificationDetails small icons must be drawable resources;
+      // the launcher icon only exists as a mipmap, which the plugin rejects.
       await plugin.initialize(
         settings: const InitializationSettings(
-          android: AndroidInitializationSettings('ic_launcher'),
+          android: AndroidInitializationSettings('ic_kronos_notification'),
         ),
       );
       _initialized = true;
@@ -187,6 +189,7 @@ class LocalReminderNotifier implements ReminderNotifier {
   Future<void> showPreview(TaskReminder reminder) async {
     const body = 'Example of the sound this reminder will play.';
     try {
+      await requestPermissions();
       final plugin = await _ensureInitialized();
       await plugin.show(
         id: 1,
